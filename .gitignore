@@ -1,0 +1,44 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Node (in case anyone adds tooling)
+node_modules/
+npm-debug.log*
+.env
+.env.local
+
+# Build artifacts
+*.zip
+*.crx
+dist/
+# The packaged extension is distributed through the Chrome Web Store, not from
+# this repository — *.zip above already covers it, and nothing should re-add it.
+
+# Live transcription: the recogniser's Python env and model are built by
+# setup.sh on each machine, not carried in git. The venv holds per-architecture
+# binaries and the model is ~300MB from the sherpa-onnx project's releases.
+server/.venv/
+server/model/
+server/model-sensevoice/
+# Optional recordings the recogniser saves with HAPPYSUBS_DEBUG_AUDIO=1.
+server/debug-audio-*.wav
+
+# My own paperwork: the release checklist and the crib sheet for the Chrome Web
+# Store form. Chore lists for one person, not documentation anyone cloning the
+# repo needs — and the store copy changes on its own schedule anyway.
+RELEASE.md
+STORE-SUBMISSION.md
+
+# Promo video: rendered frames and stills are scratch; regenerate with promo/render.py.
+promo/build/
+# The master is over GitHub's 100 MB file limit; the videos are outputs, not source.
+promo/*.mp4
+# The vertical cuts and their covers stay local; only the 16:9 film is published.
+promo/vertical.html
+promo/*-cover.jpg

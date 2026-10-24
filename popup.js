@@ -1,0 +1,1416 @@
+// Popup: reads current tab's caption info, lets the user pick a second
+// language and adjust overlay styling. Persists to chrome.storage.sync.
+
+const DEFAULTS = {
+  liveProvider: "google",
+  liveModels: {},
+  liveApiKeys: {},
+  transcriptPanelBilingual: true,
+  enabled: true,
+  secondLang: ydsDefaultSecondLang(),
+  bottomOffset: 5,
+  captionWidth: 80,
+  fontSize: 20,
+  color: "#f7c9c8",
+  unifyStyles: false,
+  sourceColor: "#ffffff",
+  sourceFontSize: 18,
+  // Set once by the page when it moves an old white setting to the new pink,
+  // so that picking white afterwards is respected — see migrateTranslationColor.
+  translationColorMoved: 0,
+  background: "rgba(0,0,0,0.6)",
+  translationProvider: "google",
+  uiLang: "auto",
+  subtitleMode: "inline",
+  takeoverCaptions: true,
+  translationOnly: false,
+  paidApiMode: "ask",
+  apiKeys: {}
+};
+
+// Where users go to grab a key for each provider.
+const KEY_LINKS = {
+  claude: "https://console.anthropic.com/settings/keys",
+  openai: "https://platform.openai.com/api-keys",
+  gemini: "https://aistudio.google.com/app/apikey",
+  deepseek: "https://platform.deepseek.com/api_keys"
+};
+
+const KEY_PLACEHOLDERS = {
+  claude: "sk-ant-...",
+  openai: "sk-...",
+  gemini: "AIza...",
+  deepseek: "sk-..."
+};
+
+// A shortlist of what each paid provider can be pointed at — not the whole
+// catalogue. Providers ship new models faster than this popup does, so the
+// picker's last entry opens a field for any other model name they accept. The
+// first entry is the default, and it must match DEFAULT_MODELS in content.js —
+// that is the fallback the page uses when this setting was never touched, or
+// was cleared.
+const PROVIDER_MODELS = {
+  claude: [
+    ["claude-haiku-4-5",  "Haiku 4.5"],
+    ["claude-sonnet-5-5", "Sonnet 5.5"],
+    ["claude-opus-5-5",   "Opus 5.5"]
+  ],
+  openai: [
+    ["gpt-6-luna",  "GPT-6 Luna"],
+    ["gpt-6.1-sol", "GPT-6.1 Sol"],
+    ["gpt-6-astra", "GPT-6 Astra"]
+  ],
+  gemini: [
+    ["gemini-3.5-flash-lite", "3.5 Flash-Lite"],
+    ["gemini-3.8-flash",      "3.8 Flash"]
+  ],
+  deepseek: [
+    ["deepseek-flash",  "Flash"],
+    ["deepseek-v4-pro", "V4 Pro"]
+  ]
+};
+
+const PROVIDER_NAMES = {
+  google: "Google Translate",
+  claude: "Claude",
+  openai: "OpenAI",
+  gemini: "Gemini",
+  deepseek: "DeepSeek",
+  get native() { return ydsT("providerNative"); }
+};
+
+// Swap static popup text to the active UI language (see ydsSetUiLang).
+function localizeStaticDom() {
+  for (const el of document.querySelectorAll("[data-i18n]")) {
+    el.textContent = ydsT(el.dataset.i18n);
+  }
+  for (const el of document.querySelectorAll("[data-i18n-title]")) {
+    const t = ydsT(el.dataset.i18nTitle);
+    el.title = t;
+    el.setAttribute("aria-label", t);
+  }
+  document.title = ydsT("appTitle");
+  $("apiKey").placeholder = ydsT("pasteHere");
+  $("apiKeyState").title = ydsT("keyStateTitle");
+  $("editApiKey").textContent = ydsT("edit");
+}
+
+// The rating line at the top of the panel — the second of the three asks that
+// content.js schedules (see "rating request" there). Its turn comes once the
+// card over the video has been and gone without a rating (step 1), from the
+// 8th video watched for a minute. It stays until rated or closed; closing it
+// hands the last ask, at the 15th video, back to the video.
+const RATE_BANNER_AFTER = 8;
+async function initRateBanner() {
+  let state;
+  try { state = (await chrome.storage.local.get(["ydsRating"])).ydsRating || {}; } catch { return; }
+  if (state.rated || (state.step | 0) !== 1 || (state.videos | 0) < RATE_BANNER_AFTER) return;
+  const banner = $("rateBanner");
+  banner.hidden = false;
+  // Written in the click itself, from what was read on opening: following the
+  // link closes the popup, and a read-then-write could be cut off half done.
+  const save = (change) => {
+    banner.hidden = true;
+    try { chrome.storage.local.set({ ydsRating: { ...state, ...change } }); } catch {}
+  };
+  $("rateGo").addEventListener("click", () => save({ rated: true }));
+  $("rateClose").addEventListener("click", () => save({ step: 2 }));
+}
+
+// The keyboard shortcut, at the foot of the panel — the one place everyone
+// opens, so it is where people learn there is one. Read from Chrome rather
+// than assumed: the viewer can rebind it, and Chrome leaves it unassigned when
+// another extension already holds those keys.
+async function renderShortcutHint() {
+  const el = $("shortcutHint");
+  let cmd = null;
+  try { cmd = ((await chrome.commands.getAll()) || []).find(c => c.name === "toggle-subtitles"); } catch {}
+  if (!cmd) { el.hidden = true; return; }
+  el.replaceChildren();
+  if (cmd.shortcut) {
+    // Chrome writes it as "⇧⌘S" on a Mac and "Alt+Shift+S" everywhere else.
+    const keys = cmd.shortcut.includes("+") ? cmd.shortcut.split("+") : [...cmd.shortcut];
+    const group = document.createElement("span");
+    group.className = "keys";
+    for (const k of keys) {
+      const kbd = document.createElement("kbd");
+      kbd.textContent = k;
+      group.appendChild(kbd);
+    }
+    const [before, after] = ydsT("shortcutHint").split("{key}").map(t => (t || "").trim());
+    if (before) el.append(before);
+    el.append(group);
+    if (after) el.append(after);
+  } else {
+    const link = document.createElement("a");
+    link.href = "#";
+    link.textContent = ydsT("shortcutSet");
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+    });
+    el.append(ydsT("shortcutUnset"), link);
+  }
+  el.hidden = false;
+}
+
+let activeTabId = null;
+let apiKeySaveTimer = null;
+let statusPollTimer = null;
+let apiKeyEditing = false;
+// The last model picked from the list, so leaving the custom field comes back
+// to it rather than to the provider's default.
+let lastListModel = "";
+
+const $ = (id) => document.getElementById(id);
+
+// The overlay keeps its background as a colour string and only the opacity is
+// editable, so the two are converted at the edge rather than stored twice.
+// The slider is labelled "transparency", so that is what it shows: drag right
+// and the plate gets lighter. What is stored is the opacity, because that is
+// what rgba() wants — the two are opposites, and the slider used to show the
+// opacity under the transparency label, so dragging towards "more transparent"
+// made the subtitle darker.
+function bgToTransparency(bg) {
+  const m = /rgba?\([^)]*,\s*([0-9.]+)\s*\)/.exec(bg || "");
+  const opacity = m ? parseFloat(m[1]) : 0.6;
+  return Math.round((1 - opacity) * 100);
+}
+function transparencyToBg(t) {
+  const opacity = 1 - Math.max(0, Math.min(100, t)) / 100;
+  return `rgba(0,0,0,${opacity.toFixed(2)})`;
+}
+
+// Sites the manifest injects into. Zoom is not one of them: it is an optional
+// permission, so until it is granted the popup injects by hand like any other
+// page (see injectGeneric and the site-access row).
+const SUPPORTED_URL = /^https?:\/\/(www\.youtube\.com|(player\.)?vimeo\.com|www\.bilibili\.com)\//;
+
+// Info from the last probe in getActiveSupportedTab, so we don't message the
+// page twice on open.
+let probedInfo = null;
+
+async function getActiveSupportedTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return null;
+  activeTabUrl = tab.url || "";
+  currentTabId = tab.id;
+  if (tab.url && SUPPORTED_URL.test(tab.url)) return tab;
+  // A YouTube/Vimeo player embedded in someone else's page — a course site, a
+  // blog. The tab's own URL is not ours, but the content script is alive in the
+  // player's frame and answers, so ask before giving up.
+  probedInfo = await askContent(tab.id);
+  if (probedInfo && probedInfo.videoId) return tab;
+  // Any other page with a <video> — a course site, a local .mp4 opened as
+  // file:// — gets the generic adapter, for live transcription.
+  if (await injectGeneric(tab)) {
+    probedInfo = await askContent(tab.id);
+    if (probedInfo && probedInfo.videoId) return tab;
+  }
+  return null;
+}
+
+// Sites that work better with a standing permission than with a click each
+// time. Asked for once, from the popup, on the page where it matters:
+//   zoom  — a Zoom recording we just injected into by hand; granting makes
+//           the next recording start by itself.
+//   embed — a page with a youtube-nocookie.com player in a frame, which
+//           activeTab cannot reach at all (it covers the top page only).
+//   site  — any other site we just injected into by hand (Coursera, a
+//           course portal): the same offer, for that one site only.
+const SITE_ACCESS = {
+  zoom: { origins: ["https://*.zoom.us/*"], text: "siteAccessZoom" },
+  embed: { origins: ["*://www.youtube-nocookie.com/*"], text: "siteAccessEmbed" }
+};
+// { kind, origins, host } for the offer to show, or null.
+let siteAccessNeeded = null;
+let currentTabId = null;
+
+async function noteSiteAccess(kind, url) {
+  let offer;
+  if (kind === "site") {
+    let u;
+    try { u = new URL(url); } catch { return; }
+    if (!/^https?:$/.test(u.protocol)) return;
+    offer = { kind, origins: [`${u.origin}/*`], host: u.hostname.replace(/^www\./, "") };
+  } else {
+    offer = { kind, origins: SITE_ACCESS[kind].origins, host: "" };
+  }
+  const granted = await chrome.permissions.contains({ origins: offer.origins });
+  // An embed the top page cannot reach matters more than the page itself.
+  if (!granted && !(siteAccessNeeded && siteAccessNeeded.kind === "embed")) siteAccessNeeded = offer;
+}
+
+function renderSiteAccess() {
+  const row = $("siteAccessRow");
+  if (!siteAccessNeeded) { row.hidden = true; return; }
+  row.hidden = false;
+  const { kind, host } = siteAccessNeeded;
+  $("siteAccessText").textContent = kind === "site"
+    ? ydsT("siteAccessSite", { host })
+    : ydsT(SITE_ACCESS[kind].text);
+  $("siteAccessBtn").textContent = ydsT("siteAccessAllow");
+}
+
+async function requestSiteAccess() {
+  const offer = siteAccessNeeded;
+  if (!offer) return;
+  let granted = false;
+  try { granted = await chrome.permissions.request({ origins: offer.origins }); } catch {}
+  if (!granted) return;
+  siteAccessNeeded = null;
+  renderSiteAccess();
+  // The service worker registers the script and, for an embed, reloads the
+  // tab; nothing more to do here even if this popup survived the dialog.
+  $("status").textContent =
+    offer.kind === "embed" ? ydsT("siteAccessReloading")
+    : offer.kind === "site" ? ydsT("siteAccessDoneSite", { host: offer.host })
+    : ydsT("siteAccessDone");
+}
+
+// Set when the tab is a local file Chrome won't let us into. Turning on "Allow
+// access to file URLs" is the viewer's call, so all we can do is say where.
+let fileAccessBlocked = false;
+
+// activeTab grants this tab for as long as the popup that opened it, which is
+// all injection needs — no host permission, no install-time warning. Probe
+// first so a page without a video never gets our scripts at all.
+async function injectGeneric(tab) {
+  const url = tab.url || "";
+  if (/^file:/.test(url) && !(await chrome.extension.isAllowedFileSchemeAccess())) {
+    fileAccessBlocked = true;
+    return false;
+  }
+  if (!/^(https?|file):/.test(url)) return false;
+  try {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const has = !!document.querySelector("video");
+        if (has) window.YDS_FORCE_GENERIC = true;
+        return {
+          hasVideo: has,
+          hasNocookieEmbed: !!document.querySelector('iframe[src*="youtube-nocookie.com"]')
+        };
+      }
+    });
+    const found = (probe && probe.result) || {};
+    if (found.hasNocookieEmbed) await noteSiteAccess("embed");
+    if (!found.hasVideo) return false;
+    if (/^https:\/\/([\w-]+\.)?zoom\.us\/rec\//.test(url)) await noteSiteAccess("zoom");
+    else await noteSiteAccess("site", url);
+    await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["overlay.css"] });
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["i18n.js", "platform.js", "live.js", "content.js"]
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The content script reports which adapter booted; fall back to YouTube so a
+// page we can't reach still reads sensibly.
+const PLATFORM_NAMES = { youtube: "YouTube", vimeo: "Vimeo", bilibili: "Bilibili", zoom: "Zoom" };
+
+// The tab we last found, so a name is still available when the page never
+// answered — which is exactly when we most need to name it, since "refresh the
+// YouTube page" on a Bilibili tab is worse than saying nothing.
+let activeTabUrl = "";
+
+function platformFromUrl(url) {
+  if (/^https?:\/\/(www\.)?bilibili\.com\//.test(url || "")) return "bilibili";
+  if (/^https?:\/\/(player\.)?vimeo\.com\//.test(url || "")) return "vimeo";
+  if (/^https?:\/\/(www\.)?youtube\.com\//.test(url || "")) return "youtube";
+  if (/^https?:\/\/([\w-]+\.)?zoom\.us\/rec\//.test(url || "")) return "zoom";
+  return "";
+}
+
+function platformName(info) {
+  const id = (info && info.platform) || platformFromUrl(activeTabUrl);
+  return PLATFORM_NAMES[id] || "YouTube";
+}
+
+async function askContent(tabId) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: "YDS_GET_INFO" }, (resp) => {
+        if (chrome.runtime.lastError) resolve(null);
+        else { noteVideoInfo(resp); resolve(resp || null); }
+      });
+    } catch { resolve(null); }
+  });
+}
+
+// Every answer from the page passes through here, so the appearance sliders
+// follow the video the popup is actually open over rather than the last one.
+// The last thing the page told us, kept so the panel can be redrawn in a new
+// language without asking again.
+let lastInfo = null;
+
+function noteVideoInfo(info) {
+  if (!info) return;
+  lastInfo = info;
+  let changed = false;
+  if (typeof info.sourceIsAsr === "boolean" && currentIsAsr !== info.sourceIsAsr) {
+    currentIsAsr = info.sourceIsAsr;
+    changed = true;
+  }
+  if (typeof info.drawnInOwnBox === "boolean" && currentOwnBox !== info.drawnInOwnBox) {
+    currentOwnBox = info.drawnInOwnBox;
+    changed = true;
+  }
+  if (typeof info.drawsSourceLine === "boolean" && currentDrawsSource !== info.drawsSourceLine) {
+    currentDrawsSource = info.drawsSourceLine;
+    changed = true;
+  }
+  if (!changed) return;
+  try { applyAppearanceUI(); } catch { /* before the DOM is wired */ }
+}
+
+async function sendContent(tabId, msg) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, msg, (resp) => {
+        if (chrome.runtime.lastError) resolve(null);
+        else resolve(resp || null);
+      });
+    } catch { resolve(null); }
+  });
+}
+
+function populateLanguages(info) {
+  const sel = $("lang");
+  sel.innerHTML = "";
+
+  const seen = new Set();
+  const add = (code, label) => {
+    if (!code || seen.has(code)) return;
+    seen.add(code);
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  };
+
+  add("", ydsT("offSecondSub"));
+
+  // Native tracks on this video first.
+  if (info?.tracks?.length) {
+    const group = document.createElement("optgroup");
+    group.label = ydsT("groupNative");
+    sel.appendChild(group);
+    for (const t of info.tracks) {
+      const opt = document.createElement("option");
+      opt.value = t.languageCode;
+      opt.textContent = `${t.name} (${t.languageCode})${t.kind === "asr" ? ydsT("asrSuffix") : ""}`;
+      group.appendChild(opt);
+      seen.add(t.languageCode);
+    }
+  }
+
+  // Auto-translation targets.
+  if (info?.translations?.length) {
+    const group = document.createElement("optgroup");
+    group.label = ydsT("groupAutoTranslate");
+    sel.appendChild(group);
+    for (const t of info.translations) {
+      if (seen.has(t.languageCode)) continue;
+      const opt = document.createElement("option");
+      opt.value = t.languageCode;
+      opt.textContent = `${t.languageName} (${t.languageCode})`;
+      group.appendChild(opt);
+      seen.add(t.languageCode);
+    }
+  }
+
+  // Common fallbacks so the picker isn't empty on non-video pages.
+  const commons = YDS_COMMON_LANGS;
+  const commonGroup = document.createElement("optgroup");
+  commonGroup.label = ydsT("groupCommon");
+  sel.appendChild(commonGroup);
+  for (const [c, n] of commons) {
+    if (seen.has(c)) continue;
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = `${n} (${c})`;
+    commonGroup.appendChild(opt);
+    seen.add(c);
+  }
+
+  // Full Google Translate language list.
+  const allGroup = document.createElement("optgroup");
+  allGroup.label = ydsT("groupAll");
+  sel.appendChild(allGroup);
+  for (const [c, n] of YDS_ALL_LANGS) {
+    if (seen.has(c)) continue;
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = `${n} (${c})`;
+    allGroup.appendChild(opt);
+    seen.add(c);
+  }
+}
+
+async function save(partial) {
+  const cur = (await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {};
+  const merged = { ...DEFAULTS, ...cur, ...partial };
+  await chrome.storage.sync.set({ ydsSettings: merged });
+}
+
+// Update just the API key for the currently selected provider.
+async function saveApiKey(provider, value) {
+  const cur = (await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {};
+  const apiKeys = { ...(cur.apiKeys || {}) };
+  if (value) apiKeys[provider] = value;
+  else delete apiKeys[provider];
+  await chrome.storage.sync.set({ ydsSettings: { ...DEFAULTS, ...cur, apiKeys } });
+}
+
+// The Live tab's own translator, model and API keys — all separate from the
+// Translate tab's, keys included, so the two can be billed and revoked apart.
+// The key field behaves like the Translate tab's: saved as you type, shown
+// masked with a tick once stored, and locked until Edit is pressed.
+let liveKeyEditing = false;
+let liveKeySaveTimer = null;
+
+async function currentSettings() {
+  return { ...DEFAULTS, ...((await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {}) };
+}
+
+function setLiveKeyEditing(editing) {
+  liveKeyEditing = editing;
+  const input = $("liveApiKey");
+  input.disabled = !editing && !!input.value;
+  $("editLiveApiKey").textContent = editing ? ydsT("done") : ydsT("edit");
+  if (editing) setTimeout(() => input.focus(), 0);
+}
+
+function updateLiveKeyState(hasKey) {
+  const el = $("liveApiKeyState");
+  el.textContent = hasKey ? "✓" : "!";
+  el.className = `keyState ${hasKey ? "ok" : "missing"}`;
+  el.title = hasKey ? ydsT("keySavedTitle") : ydsT("keyMissingTitle");
+}
+
+async function saveLiveKey(value) {
+  const p = $("liveProvider").value;
+  const cur = (await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {};
+  const liveApiKeys = { ...(cur.liveApiKeys || {}) };
+  if (value) liveApiKeys[p] = value;
+  else delete liveApiKeys[p];
+  await chrome.storage.sync.set({ ydsSettings: { ...DEFAULTS, ...cur, liveApiKeys } });
+  $("status").textContent = value
+    ? ydsT("keySaved", { name: providerName(p) })
+    : ydsT("keyCleared", { name: providerName(p) });
+}
+
+function renderLiveProviderRow(settings) {
+  const legacy = settings.liveUseProvider ? settings.translationProvider : "google";
+  const p = settings.liveProvider && settings.liveProvider !== "google" ? settings.liveProvider : legacy;
+  $("liveProvider").value = p;
+  const paid = p !== "google";
+  $("liveModelRow").hidden = !paid;
+  $("liveKeyRow").hidden = !paid;
+  if (!paid) return;
+  const list = PROVIDER_MODELS[p] || [];
+  const sel = $("liveModel");
+  sel.innerHTML = "";
+  for (const [id, label] of list) {
+    const o = document.createElement("option");
+    o.value = id;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  const chosen = (settings.liveModels || {})[p];
+  sel.value = chosen && list.some(([id]) => id === chosen) ? chosen : (list[0] ? list[0][0] : "");
+  const key = (settings.liveApiKeys || {})[p] || "";
+  // Not while the viewer is typing in it: a save re-renders this, and
+  // resetting the field then would throw away what they are entering.
+  if (!liveKeyEditing) {
+    const input = $("liveApiKey");
+    input.value = key;
+    input.placeholder = KEY_PLACEHOLDERS[p] || ydsT("pasteHere");
+    setLiveKeyEditing(!key);
+  }
+  updateLiveKeyState(!!key || !!$("liveApiKey").value.trim());
+}
+
+function applyProviderUI(settings) {
+  const p = $("provider").value;
+  const needsKey = p !== "google";
+  fillModelOptions(p, settings);
+  $("modelRow").style.display = needsKey ? "" : "none";
+  $("modelHelp").style.display = needsKey ? "" : "none";
+  $("apiKeyRow").style.display = needsKey ? "" : "none";
+  $("apiKeyHelp").style.display = needsKey ? "" : "none";
+  $("paidControls").style.display = needsKey ? "block" : "none";
+  $("askPaidRow").style.display = needsKey ? "flex" : "none";
+  $("paidApiMode").value = settings.paidApiMode || "ask";
+  $("translationOnly").checked = !!settings.translationOnly;
+  if (needsKey) {
+    const keys = settings.apiKeys || {};
+    const key = keys[p] || "";
+    $("apiKey").value = key;
+    $("apiKey").placeholder = KEY_PLACEHOLDERS[p] || ydsT("pasteHere");
+    $("apiKeyLink").href = KEY_LINKS[p] || "#";
+    $("apiKeyLink").textContent = ydsT("getKeyLink", { name: PROVIDER_NAMES[p] || p });
+    $("usePaidApi").textContent = ydsT("usePaidApiBtn", { name: providerName(p) });
+    setApiKeyEditing(!key);
+    updateApiKeyState(!!key);
+  }
+}
+
+function setApiKeyEditing(editing) {
+  apiKeyEditing = editing;
+  const input = $("apiKey");
+  input.disabled = !editing && !!input.value;
+  $("editApiKey").textContent = editing ? ydsT("done") : ydsT("edit");
+  if (editing) setTimeout(() => input.focus(), 0);
+}
+
+function updateApiKeyState(hasKey) {
+  const el = $("apiKeyState");
+  el.textContent = hasKey ? "✓" : "!";
+  el.className = `keyState ${hasKey ? "ok" : "missing"}`;
+  el.title = hasKey ? ydsT("keySavedTitle") : ydsT("keyMissingTitle");
+}
+
+function providerName(provider) {
+  return PROVIDER_NAMES[provider] || provider || ydsT("providerUnknown");
+}
+
+// The list changes with the provider, so it is rebuilt rather than filtered.
+// A model this shortlist has never heard of — one the viewer typed in — comes
+// back as the custom field holding it, not as a silent snap to the default.
+function fillModelOptions(provider, settings) {
+  const list = PROVIDER_MODELS[provider];
+  const sel = $("model");
+  sel.innerHTML = "";
+  if (!list) { showModelCustom(false); return; }
+  for (const [id, label] of list) {
+    const o = document.createElement("option");
+    o.value = id;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  const custom = document.createElement("option");
+  custom.value = CUSTOM_MODEL;
+  custom.textContent = ydsT("modelCustomOption");
+  sel.appendChild(custom);
+
+  const chosen = ((settings && settings.models) || {})[provider] || list[0][0];
+  const known = list.some(([id]) => id === chosen);
+  lastListModel = known ? chosen : list[0][0];
+  sel.value = known ? chosen : CUSTOM_MODEL;
+  $("modelCustom").value = known ? "" : chosen;
+  $("modelCustom").placeholder = list[0][0];
+  showModelCustom(!known);
+}
+
+// The sentinel the picker's last entry carries. It is never stored.
+const CUSTOM_MODEL = "__custom__";
+
+function showModelCustom(on) {
+  $("model").hidden = on;
+  $("modelCustomWrap").hidden = !on;
+}
+
+// The default for a provider, used when the custom field is left empty.
+function defaultModelFor(provider) {
+  const list = PROVIDER_MODELS[provider];
+  return list ? list[0][0] : "";
+}
+
+async function saveModel(provider, model) {
+  const cur = (await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {};
+  await save({ models: { ...(cur.models || {}), [provider]: model } });
+  $("status").textContent = ydsT("statusProviderSwitched", { name: providerName(provider) });
+  refreshStatusSeries();
+}
+
+// Leaving the custom field empty is how you get back to the list, rather than
+// a way to send the provider an empty model name.
+function backToModelList(provider) {
+  const back = lastListModel || defaultModelFor(provider);
+  $("model").value = back;
+  $("modelCustom").value = "";
+  showModelCustom(false);
+  return saveModel(provider, back);
+}
+
+function statusTextFor(info, tab) {
+  if (!tab && fileAccessBlocked) return ydsT("statusFileAccess");
+  if (!tab && siteAccessNeeded && siteAccessNeeded.kind === "embed") return ydsT("siteAccessEmbed");
+  if (!tab) return ydsT("statusNoTab");
+  if (!info || !info.videoId) return ydsT("statusNoComm", { platform: platformName(info) });
+
+  // Live transcription owns the overlay while it runs, so every message below
+  // would be describing a subtitle track the viewer isn't looking at — saying
+  // "no subtitles picked up yet" while captions are visibly on screen.
+  if (info.live && info.live.active) {
+    if (info.live.status === "connecting") return ydsT("liveConnecting");
+    if (info.live.status === "listening") return ydsT("statusLiveRunning");
+    return ydsT("liveUnavailable");
+  }
+
+  // A page we were injected into with no caption tracks: live is the only
+  // thing to do. With tracks it is like any other site.
+  if (info.platform === "generic" && !(info.tracks && info.tracks.length)) return ydsT("statusGenericLive");
+
+  const st = info.translationStatus || {};
+  if (st.mode === "native" || info.usingNativeTrack) {
+    return ydsT("statusNative", { lang: $("lang").value || ydsT("statusNativeFallbackLang") });
+  }
+  if (st.mode === "translated") {
+    return ydsT("statusDone", { name: providerName(st.provider), count: st.cueCount || 0 });
+  }
+  if (st.mode === "translating") {
+    const done = st.translatedCount || 0;
+    const total = st.totalCount || st.cueCount || 0;
+    const progress = total ? ydsT("progressFmt", { done, total }) : "";
+    return ydsT("statusTranslating", { name: providerName(st.provider), progress });
+  }
+  if (st.mode === "partial") {
+    return ydsT("statusPartial", {
+      name: providerName(st.provider),
+      done: st.translatedCount || 0,
+      missing: st.untranslatedCount || 0,
+      error: st.error ? ydsT("errorPrefix") + st.error : ""
+    });
+  }
+  if (st.mode === "fallback") {
+    if (st.declined || (st.error || "").startsWith("用户取消")) {
+      return ydsT("statusCancelledFallback", { name: providerName(st.requestedProvider) });
+    }
+    return ydsT("statusFallback", {
+      name: providerName(st.requestedProvider),
+      error: st.error ? ydsT("errorPrefix") + st.error : ""
+    });
+  }
+  if (st.mode === "awaiting_paid_confirmation") {
+    return ydsT("statusAwaiting", { name: providerName(st.requestedProvider) });
+  }
+  if (st.mode === "need_api_key") {
+    return ydsT("statusNeedKey", { name: providerName(st.requestedProvider) });
+  }
+  if (st.mode === "error") {
+    return ydsT("statusError", {
+      name: providerName(st.requestedProvider || st.provider),
+      error: st.error || ydsT("unknownError")
+    });
+  }
+  if (info.nativeCaptionText) {
+    return ydsT("statusDetected", { platform: platformName(info) });
+  }
+  // In translation-only mode the CC prompt would be wrong — that's the whole
+  // point of the mode. But if we still have no subtitles, say so plainly and
+  // give the one workaround that always works.
+  if ($("translationOnly").checked) {
+    return info.preCuesLoaded ? ydsT("statusTranslationOnly") : ydsT("statusTranslationOnlyNeedsCc");
+  }
+  // Vimeo and Bilibili hand us the track without the player's help, so their
+  // caption switch is optional — but on Bilibili "no track" is common enough
+  // to be worth naming, along with the sign-in caveat behind it.
+  if (info.platform === "bilibili") {
+    return (info.tracks && info.tracks.length)
+      ? ydsT("statusBilibiliReading")
+      : ydsT("statusBilibiliNoTrack");
+  }
+  if (info.platform === "vimeo") return ydsT("statusVimeoReading");
+  if (info.platform === "zoom") {
+    return (info.tracks && info.tracks.length)
+      ? ydsT("statusZoomReading")
+      : ydsT("statusZoomNoTranscript");
+  }
+  return ydsT("statusTurnOnCC");
+}
+
+// An error the viewer has to read must survive the status poll. Without this
+// the explanation for a refused button appeared and was overwritten within the
+// second, which looked exactly like the button doing nothing at all.
+let statusPinnedUntil = 0;
+
+function pinStatus(text, ms = 8000) {
+  $("status").textContent = text;
+  statusPinnedUntil = Date.now() + ms;
+}
+
+function writeStatus(text) {
+  if (Date.now() < statusPinnedUntil) return;
+  $("status").textContent = text;
+}
+
+async function refreshStatusSoon(delay = 900) {
+  if (!activeTabId) return;
+  setTimeout(async () => {
+    const info = await askContent(activeTabId);
+    writeStatus(statusTextFor(info, { id: activeTabId }));
+  }, delay);
+}
+
+function refreshStatusSeries() {
+  refreshStatusSoon(900);
+  refreshStatusSoon(2500);
+  refreshStatusSoon(6000);
+}
+
+function startStatusPolling() {
+  if (!activeTabId || statusPollTimer) return;
+  statusPollTimer = setInterval(async () => {
+    const info = await askContent(activeTabId);
+    writeStatus(statusTextFor(info, { id: activeTabId }));
+    const mode = info?.translationStatus?.mode;
+    if (mode && mode !== "translating" && mode !== "awaiting_paid_confirmation") {
+      clearInterval(statusPollTimer);
+      statusPollTimer = null;
+    }
+  }, 1000);
+}
+
+
+// ---------- tabs + live transcription ----------
+
+const SETUP_URL = "https://madebyhappy.github.io/happysubs/#live";
+
+// The gear doubles as the way back: there is nowhere else to put a back
+// button in a popup this narrow, and one control for one toggle is clearer
+// than two that look alike.
+// Whether live transcription is running right now. It decides, along with the
+// subtitle style, whether the appearance sliders have anything to act on.
+let liveRunning = false;
+// Whether the video behind the popup is running on an auto-generated track.
+// Null until the page has answered — treated as "not auto" so the sliders do
+// not flash into view and back out again while the answer is on its way.
+let currentIsAsr = false;
+// What the PAGE says about this video: is our own subtitle box what is drawing,
+// or is the translation going inside the player's caption? Null until it
+// answers. Guessing this from the track kind was wrong often enough to matter —
+// a video with only a target-language track has no source cues, so takeover
+// cannot engage and the translation is injected whatever the switches say.
+let currentOwnBox = null;
+// …and whether the ORIGINAL is one of the lines it draws. "Translation only"
+// draws one language, so the original's rows would be settings for something
+// that is not on screen.
+let currentDrawsSource = null;
+
+// The sliders style our own subtitle box, so they are shown exactly when that
+// box is what the viewer is looking at:
+//
+//   "separate layer"  — always; the box is how every subtitle is drawn.
+//   "part of the player's subtitle" — only while live transcription runs.
+//     A recogniser is used precisely because the player has no captions, so
+//     there is nothing to become part of and live always falls back to the box.
+//     That is easy to miss, and it is why hiding these on the style alone left
+//     no way to resize live captions.
+function applyAppearanceUI() {
+  const inline = $("subtitleMode").value === "inline";
+  // The sliders style our own box, so they are shown exactly when that box is
+  // what is drawing this video. In inline mode that is: live transcription
+  // (there is no player caption to join), an auto-generated track (its rolling
+  // line is not the sentence we translate, so the translation goes in the box),
+  // and takeover. What is left — a video with its own written captions — has
+  // the translation injected into the player's caption, where the font, the
+  // size and the colour are the player's and these sliders would do nothing.
+  // The page's own answer wins. These sliders style our box, and only the page
+  // knows whether that box is what is on screen — on a video that carries a
+  // target-language track but no source cues, nothing can take the caption
+  // over, so the translation is injected into the player's and none of this
+  // applies however the switches are set. Guessing led to a panel full of
+  // controls that quietly did nothing.
+  const ownBox = currentOwnBox !== null
+    ? (currentOwnBox || liveRunning)
+    : (!inline || liveRunning || currentIsAsr || $("takeoverCaptions").checked);
+  $("appearanceControls").hidden = !ownBox;
+  $("appearanceNote").hidden = ownBox;
+  applyStyleSplitUI();
+  // Drawing both languages ourselves is a choice only inside inline mode:
+  // "separate layer" already leaves the player's original alone by definition.
+  $("takeoverRow").hidden = !inline;
+  $("takeoverNote").hidden = !inline;
+  // Off, the note says what the switch would do; on, it says what is happening.
+  // A note that still explains the choice after it has been made reads as if
+  // nothing took effect.
+  $("takeoverNote").textContent =
+    ydsT($("takeoverCaptions").checked ? "takeoverNoteOn" : "takeoverNote");
+}
+
+// One set of size/colour, or one per language. The original's rows only exist
+// when they can differ; the headings only appear then too, because with a
+// single set there is nothing for them to tell apart.
+// These two settings change WHICH renderer draws, and the panel now takes that
+// answer from the page. Without re-asking, it keeps showing the answer from
+// before the change — picking "translation only" left the appearance section
+// empty, still reporting that the translation was going inside the player's
+// caption. The page needs a moment to apply the setting first.
+let rendererRefreshTimer = null;
+function refreshRendererSoon(ms = 260) {
+  clearTimeout(rendererRefreshTimer);
+  rendererRefreshTimer = setTimeout(async () => {
+    if (activeTabId) await askContent(activeTabId);   // noteVideoInfo does the rest
+  }, ms);
+}
+
+function applyStyleSplitUI() {
+  // Does the original appear in our box at all? In "translation only" it does
+  // not, so there is nothing for its size and colour to change — and with one
+  // language on screen there is nothing to unify either, which leaves the
+  // translation's own rows standing alone without headings.
+  const drawsSource = currentDrawsSource !== null
+    ? currentDrawsSource
+    : $("subtitleMode").value === "inline";
+  const split = drawsSource && !$("unifyStyles").checked;
+  $("unifyStylesRow").hidden = !drawsSource;
+  for (const id of ["sourceStyleHead", "sourceFontRow", "sourceColorRow", "targetStyleHead"]) {
+    $(id).hidden = !split;
+  }
+}
+
+function showSettings(on) {
+  $("settingsView").hidden = !on;
+  $("mainView").hidden = on;
+  // The status line reports on the video behind the popup, which settings has
+  // nothing to do with.
+  $("status").hidden = on;
+  const gear = $("openSettings");
+  gear.textContent = on ? "\u2190" : "\u2699";
+  const label = ydsT(on ? "back" : "openSettings");
+  gear.title = label;
+  gear.setAttribute("aria-label", label);
+}
+
+function selectTab(which, { remember = true } = {}) {
+  const live = which === "live";
+  $("tabLive").setAttribute("aria-selected", String(live));
+  $("tabTranslate").setAttribute("aria-selected", String(!live));
+  $("panelLive").hidden = !live;
+  $("panelTranslate").hidden = live;
+  if (remember) { try { localStorage.setItem("yds-popup-tab", which); } catch {} }
+}
+
+// The live panel says one of three things: what the feature is (before you
+// start), how it is going (once running), or what went wrong — with the setup
+// link attached whenever the answer is "the recogniser isn't there".
+function renderLivePanel(info) {
+  const st = (info && info.live) || { active: false, status: "stopped" };
+  if (liveRunning !== !!st.active) {
+    liveRunning = !!st.active;
+    applyAppearanceUI();
+  }
+  const running = !!st.active;
+  $("liveToggle").textContent = ydsT(running ? "liveStop" : "liveStart");
+
+  let msg;
+  let note = "";       // a second line under the status, with the setup link
+  let showSetup = false;
+  if (!running) {
+    msg = ydsT("liveIdle");
+    showSetup = true;
+  } else if (st.status === "connecting") {
+    msg = ydsT("liveConnecting");
+  } else if (st.status === "listening") {
+    msg = ydsT("liveListening");
+    // An old recogniser never introduces itself; a current one says whether
+    // its second model loaded. Both are fixed by one more install run, but
+    // they are different news: an update to get, or a download that failed.
+    if (!st.server) {
+      note = ydsT("liveServerOld");
+      showSetup = true;
+    } else if (st.server.refine === false) {
+      note = ydsT("liveRefineMissing");
+      showSetup = true;
+    }
+    // Worth saying: a track was found, so the transcription is sitting idle.
+    if (info && info.preCuesLoaded) msg += " " + ydsT("liveHasTrack");
+  } else {
+    msg = ydsT("liveUnavailable");
+    showSetup = true;
+  }
+
+  setLiveStatus(msg, showSetup, note);
+  renderLiveStartHint(!running || st.status === "unavailable");
+}
+
+// Until the recogniser is connected: one sentence on how to start it, and the
+// command ready to copy. On Windows there is nothing to type — the installer
+// left a start.bat to double-click.
+const IS_WINDOWS = /win/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "");
+function renderLiveStartHint(show) {
+  const box = $("liveStartHint");
+  box.hidden = !show;
+  if (!show) return;
+  $("liveStartText").textContent = ydsT(IS_WINDOWS ? "liveStartWin" : "liveStartMac");
+  $("liveCmdRow").hidden = IS_WINDOWS;
+  $("liveCmdCopy").textContent = ydsT("liveCopy");
+}
+
+// The line under the Start button. An error used to replace the whole line,
+// setup link included — exactly when someone is most likely to need the link.
+function setLiveStatus(msg, showSetup, note) {
+  const el = $("liveStatus");
+  el.textContent = msg;
+  // An update to install gets its own tinted box, link inside, so it is not
+  // read as part of the "connected" line above it.
+  let linkHost = el;
+  if (note) {
+    const box = document.createElement("div");
+    box.className = "liveNote";
+    box.textContent = note;
+    el.appendChild(box);
+    linkHost = box;
+  }
+  if (!showSetup) return;
+  linkHost.appendChild(document.createTextNode(" "));
+  const a = document.createElement("a");
+  a.href = SETUP_URL;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = ydsT("liveSetupLink");
+  linkHost.appendChild(a);
+}
+
+const LIVE_ERRORS = {
+  "no-video": "liveNoVideo",
+  "capture-failed": "liveCaptureFailed",
+  "tab-capture-declined": "liveTabCaptureDeclined",
+  "reopen-after-reload": "liveReopen",
+  "no-platform": "liveNoVideo"
+};
+
+// Chrome lets an extension capture a tab only if the tab was "invoked" —
+// the icon clicked — while the extension already held tabCapture. A tab
+// invoked before the permission was granted stays unusable until it reloads,
+// and clicking the icon again does not help: Chrome only records the first
+// click per page load. So the first time, granting is followed by a reload
+// and a fresh click; from then on the permission is already there and one
+// click is enough.
+// What actually clears it is leaving the page's origin: Chrome keeps a tab's
+// "invoked" record across reloads of the same site, so a plain reload left
+// the tab exactly as unusable as before — and since this ran on every click,
+// the page reloaded forever and transcription never started. So the tab is
+// sent to a blank page and straight back, which does start a fresh record,
+// and only once per tab: if it still fails after that, the reason is shown
+// instead of trying again.
+async function reloadForTabCapture(detail) {
+  const key = `ydsTabCapReset_${activeTabId}`;
+  let done = false;
+  try { done = !!(await chrome.storage.session.get(key))[key]; } catch {}
+  if (done) return { ok: false, error: "capture-failed", detail: detail || "" };
+  try {
+    await chrome.storage.session.set({ [key]: true });
+    const tab = await chrome.tabs.get(activeTabId);
+    const url = tab.url;
+    if (!url) return { ok: false, error: "capture-failed", detail: detail || "" };
+    await chrome.tabs.update(activeTabId, { url: "about:blank" });
+    await new Promise(r => setTimeout(r, 350));
+    await chrome.tabs.update(activeTabId, { url });
+  } catch (e) {
+    return { ok: false, error: "capture-failed", detail: String((e && e.message) || e) };
+  }
+  return { ok: false, error: "reopen-after-reload" };
+}
+
+async function startLiveFromTabAudio() {
+  const perm = { permissions: ["tabCapture"] };
+  let had = false;
+  try { had = await chrome.permissions.contains(perm); } catch {}
+  if (!had) {
+    // Said before Chrome's dialog, whose own wording ("all your data on all
+    // websites") describes the permission class, not what this does with it.
+    setLiveStatus(ydsT("liveTabCaptureAsk"), false);
+    let granted = false;
+    try { granted = await chrome.permissions.request(perm); } catch {}
+    if (!granted) return { ok: false, error: "tab-capture-declined" };
+    return reloadForTabCapture();
+  }
+  const res = await sendContent(activeTabId, { type: "YDS_LIVE_START", tabAudio: true });
+  if (res && res.ok === false && /not been invoked/i.test(res.detail || "")) return reloadForTabCapture(res.detail);
+  return res;
+}
+
+async function toggleLive(info) {
+  if (!activeTabId) return;
+  const running = !!(info && info.live && info.live.active);
+  let res = await sendContent(activeTabId, { type: running ? "YDS_LIVE_STOP" : "YDS_LIVE_START" });
+  // The video would not let us tap it directly (a local file, a cross-origin
+  // stream). Capturing the whole tab always works, but takes a permission we
+  // only ask for now — still inside this click, which the request needs.
+  if (!running && res && res.ok === false && res.error === "capture-failed") {
+    res = await startLiveFromTabAudio();
+  }
+  if (res && res.ok === false) {
+    // Chrome's own reason, when there is one: "could not tap the audio" covers
+    // half a dozen different refusals, and only the reason says which.
+    const known = res.error === "reopen-after-reload" || res.error === "tab-capture-declined";
+    const why = !known && res.detail ? ` (${res.detail})` : "";
+    setLiveStatus(ydsT(LIVE_ERRORS[res.error] || "liveUnavailable") + why, !known);
+    return;
+  }
+  // Give the socket a moment to land on connected-or-not before re-reading.
+  setTimeout(async () => {
+    const fresh = await askContent(activeTabId);
+    renderLivePanel(fresh);
+  }, 600);
+  renderLivePanel({ live: { active: !running, status: running ? "stopped" : "connecting" } });
+}
+
+async function init() {
+  const stored = (await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {};
+  const settings = { ...DEFAULTS, ...stored };
+
+  // Panel language before anything is painted. Localizing first and reading the
+  // setting afterwards would flash the browser-default language on every open.
+  ydsSetUiLang(settings.uiLang);
+  localizeStaticDom();
+  initRateBanner();
+  renderShortcutHint();
+
+  $("enabled").checked = !!settings.enabled;
+  $("transcriptPanelBilingual").checked = settings.transcriptPanelBilingual !== false;
+  $("uiLang").value = settings.uiLang || "auto";
+  $("subtitleMode").value = settings.subtitleMode || "inline";
+  $("takeoverCaptions").checked = !!settings.takeoverCaptions;
+  $("bottomOffset").value = settings.bottomOffset;
+  $("bottomOffsetVal").textContent = `${settings.bottomOffset}%`;
+  $("captionWidth").value = settings.captionWidth;
+  $("captionWidthVal").textContent = `${settings.captionWidth}%`;
+  $("fontSize").value = settings.fontSize;
+  $("color").value = settings.color;
+  $("unifyStyles").checked = !!settings.unifyStyles;
+  $("sourceColor").value = settings.sourceColor || "#ffffff";
+  $("sourceFontSize").value = settings.sourceFontSize;
+  applyStyleSplitUI();
+  $("bgAlpha").value = bgToTransparency(settings.background);
+  $("bgAlphaVal").textContent = `${bgToTransparency(settings.background)}%`;
+  applyAppearanceUI();
+  $("provider").value = settings.translationProvider || "google";
+  $("paidApiMode").value = settings.paidApiMode || "ask";
+  applyProviderUI(settings);
+  renderLiveProviderRow(settings);
+
+  const tab = await getActiveSupportedTab();
+  activeTabId = tab ? tab.id : null;
+  let info = probedInfo;
+  if (tab && !info) info = await askContent(tab.id);
+
+  populateLanguages(info);
+  renderSiteAccess();
+  // Only Zoom has a transcript panel to put a translation into.
+  $("transcriptPanelRow").hidden = !(info && info.platform === "zoom");
+  $("lang").value = settings.secondLang || "";
+
+  if (!tab) {
+    $("videoInfo").textContent = "";
+  } else if (info && info.videoId) {
+    // A Zoom recording id is a 100-character token; the meeting topic is
+    // what the viewer actually recognises.
+    $("videoInfo").textContent =
+      ((info.platform === "zoom" || info.platform === "generic") && info.videoTitle) || info.videoId;
+  }
+  $("status").textContent = statusTextFor(info, tab);
+  renderLivePanel(info);
+  let savedTab = "translate";
+  try { savedTab = localStorage.getItem("yds-popup-tab") || "translate"; } catch {}
+  // Nothing to translate on a generic page, so open where the work is —
+  // without saving it as the viewer's preferred tab.
+  if (info && info.platform === "generic" && !(info.tracks && info.tracks.length)) {
+    selectTab("live", { remember: false });
+  }
+  else selectTab(savedTab);
+  if (info?.translationStatus?.mode === "translating") startStatusPolling();
+
+  $("enabled").addEventListener("change", (e) => save({ enabled: e.target.checked }));
+  $("tabTranslate").addEventListener("click", () => selectTab("translate"));
+  $("tabLive").addEventListener("click", () => selectTab("live"));
+  $("liveToggle").addEventListener("click", async () => {
+    const fresh = activeTabId ? await askContent(activeTabId) : null;
+    toggleLive(fresh);
+  });
+
+  $("siteAccessBtn").addEventListener("click", requestSiteAccess);
+
+  $("transcriptPanelBilingual").addEventListener("change", async (e) => {
+    await save({ transcriptPanelBilingual: e.target.checked });
+  });
+
+  $("translationOnly").addEventListener("change", async (e) => {
+    await save({ translationOnly: e.target.checked });
+    refreshStatusSoon(300);
+  });
+  $("lang").addEventListener("change", async (e) => {
+    await save({ secondLang: e.target.value });
+    $("status").textContent = ydsT("statusLangSwitched");
+    refreshStatusSeries();
+    startStatusPolling();
+  });
+  // Settings are a second view of this popup, not a separate page: everything
+  // here changes what is on screen behind it, and a tab would hide the video.
+  $("openSettings").addEventListener("click", () => showSettings($("settingsView").hidden));
+
+  // The page does the saving, not this popup: a blob URL dies with the document
+  // that created it, and a popup is destroyed as soon as it loses focus — which
+  // is what clicking a download link causes. chrome.downloads would avoid that
+  // too, but it is a permission in the install prompt for one button.
+  $("downloadSrt").addEventListener("click", async () => {
+    const tab = await getActiveSupportedTab();
+    if (!tab) { $("status").textContent = ydsT("statusNoTab"); return; }
+    const kind = $("srtKind").value;
+    const res = await new Promise((resolve) => {
+      chrome.tabs.sendMessage(tab.id, { type: "YDS_GET_SRT", kind }, (r) => {
+        if (chrome.runtime.lastError) resolve(null); else resolve(r);
+      });
+    });
+    if (res && res.busy) {
+      // The progress stays: "how far along is it" is exactly what someone
+      // told to wait wants to know.
+      const info = await askContent(tab.id);
+      const progress = info ? statusTextFor(info, tab) : "";
+      pinStatus([progress, ydsT("srtBusy")].filter(Boolean).join(" "), 4000);
+      return;
+    }
+    if (!res || !res.ok) { $("status").textContent = ydsT("srtEmpty"); return; }
+    let saved = ydsT(res.from === "live" ? "srtSavedLive" : "srtSaved", { n: res.cueCount });
+    if (res.untranslated) saved += " " + ydsT("srtSomeUntranslated", { n: res.untranslated });
+    pinStatus(saved);
+  });
+
+  $("uiLang").addEventListener("change", async (e) => {
+    const value = e.target.value;
+    await save({ uiLang: value });
+    ydsSetUiLang(value);
+    localizeStaticDom();
+    renderShortcutHint();
+    // Everything drawn by code rather than marked up with data-i18n has to be
+    // drawn again, or it stays in the old language until the popup reopens:
+    // the live tab, the status line, the language and translator lists, the
+    // site-access card.
+    const cur = { ...DEFAULTS, ...((await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {}) };
+    const langNow = $("lang").value;
+    populateLanguages(lastInfo);
+    $("lang").value = langNow;
+    applyProviderUI(cur);
+    renderLiveProviderRow(cur);
+    renderSiteAccess();
+    renderLivePanel(lastInfo);
+    if (activeTabId) $("status").textContent = statusTextFor(lastInfo, { id: activeTabId });
+    // Re-rendering the static text wipes the gear's own state back to its
+    // default glyph, and puts the takeover note back to its "off" wording, so
+    // both are restored here.
+    showSettings(!$("settingsView").hidden);
+    applyAppearanceUI();
+  });
+
+  $("subtitleMode").addEventListener("change", (e) => {
+    save({ subtitleMode: e.target.value });
+    applyAppearanceUI();
+    refreshRendererSoon();
+  });
+  // Back to how it looked out of the box. Appearance only — the language, the
+  // translator and the API keys are not "appearance" and losing them to a
+  // button in this section would be a nasty surprise.
+  $("resetAppearance").addEventListener("click", async () => {
+    const fields = ["bottomOffset", "captionWidth", "fontSize", "color", "background",
+                    "unifyStyles", "sourceColor", "sourceFontSize"];
+    const fresh = {};
+    for (const k of fields) fresh[k] = DEFAULTS[k];
+    await save(fresh);
+    $("bottomOffset").value = fresh.bottomOffset;
+    $("bottomOffsetVal").textContent = `${fresh.bottomOffset}%`;
+    $("captionWidth").value = fresh.captionWidth;
+    $("captionWidthVal").textContent = `${fresh.captionWidth}%`;
+    $("fontSize").value = fresh.fontSize;
+    $("color").value = fresh.color;
+    $("bgAlpha").value = bgToTransparency(fresh.background);
+    $("bgAlphaVal").textContent = `${bgToTransparency(fresh.background)}%`;
+    $("unifyStyles").checked = !!fresh.unifyStyles;
+    $("sourceColor").value = fresh.sourceColor;
+    $("sourceFontSize").value = fresh.sourceFontSize;
+    applyStyleSplitUI();
+  });
+
+  $("takeoverCaptions").addEventListener("change", (e) => {
+    save({ takeoverCaptions: e.target.checked });
+    refreshRendererSoon();
+    // Turning this on means we draw the box, so the appearance sliders start
+    // applying — they have to appear with it, not on the next popup open.
+    applyAppearanceUI();
+  });
+  $("captionWidth").addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    $("captionWidthVal").textContent = `${v}%`;
+    save({ captionWidth: v });
+  });
+  $("bottomOffset").addEventListener("input", (e) => {
+    const v = parseInt(e.target.value, 10) || 0;
+    $("bottomOffsetVal").textContent = `${v}%`;
+    save({ bottomOffset: v });
+  });
+  // "input", not "change": a number field only fires change on blur, and
+  // closing the popup destroys the document without ever blurring it — so a
+  // size typed and then dismissed was silently thrown away. The sliders have
+  // always used input; these two were the odd ones out.
+  $("fontSize").addEventListener("input",
+    (e) => save({ fontSize: parseInt(e.target.value, 10) || DEFAULTS.fontSize }));
+  $("color").addEventListener("change", (e) => save({ color: e.target.value }));
+  $("sourceFontSize").addEventListener("input",
+    (e) => save({ sourceFontSize: parseInt(e.target.value, 10) || DEFAULTS.sourceFontSize }));
+  $("sourceColor").addEventListener("change", (e) => save({ sourceColor: e.target.value }));
+  $("unifyStyles").addEventListener("change", (e) => {
+    save({ unifyStyles: e.target.checked });
+    applyStyleSplitUI();
+  });
+  $("bgAlpha").addEventListener("input", (e) => {
+    const v = parseInt(e.target.value, 10) || 0;
+    $("bgAlphaVal").textContent = `${v}%`;
+    save({ background: transparencyToBg(v) });
+  });
+
+  $("model").addEventListener("change", async (e) => {
+    const provider = $("provider").value;
+    // Nothing is stored for the sentinel itself — the field below it decides.
+    if (e.target.value === CUSTOM_MODEL) {
+      showModelCustom(true);
+      $("modelCustom").value = "";
+      $("modelCustom").focus();
+      return;
+    }
+    lastListModel = e.target.value;
+    await saveModel(provider, e.target.value);
+  });
+
+  $("modelCustom").addEventListener("change", async (e) => {
+    const provider = $("provider").value;
+    const typed = (e.target.value || "").trim();
+    if (!typed) return backToModelList(provider);
+    e.target.value = typed;
+    await saveModel(provider, typed);
+  });
+  // Picking "custom" and then clicking away without typing leaves no change
+  // event behind, so the empty field is caught on the way out too.
+  $("modelCustom").addEventListener("blur", () => {
+    if (!$("modelCustomWrap").hidden && !$("modelCustom").value.trim()) {
+      backToModelList($("provider").value);
+    }
+  });
+  $("modelUseList").addEventListener("click", () => backToModelList($("provider").value));
+
+  $("liveCmdCopy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("liveCmd").textContent);
+      $("liveCmdCopy").textContent = ydsT("liveCopied");
+      setTimeout(() => { $("liveCmdCopy").textContent = ydsT("liveCopy"); }, 1500);
+    } catch {}
+  });
+
+  $("liveProvider").addEventListener("change", async (e) => {
+    // liveUseProvider is the switch this replaced; cleared so it cannot
+    // override the choice made here.
+    liveKeyEditing = false;
+    await save({ liveProvider: e.target.value, liveUseProvider: false });
+    renderLiveProviderRow(await currentSettings());
+  });
+  $("liveModel").addEventListener("change", async (e) => {
+    const cur = await currentSettings();
+    await save({ liveModels: { ...(cur.liveModels || {}), [$("liveProvider").value]: e.target.value } });
+  });
+  $("editLiveApiKey").addEventListener("click", async () => {
+    if (liveKeyEditing) {
+      clearTimeout(liveKeySaveTimer);
+      const value = $("liveApiKey").value.trim();
+      liveKeyEditing = false;
+      await saveLiveKey(value);
+      updateLiveKeyState(!!value);
+      setLiveKeyEditing(false);
+    } else {
+      setLiveKeyEditing(true);
+    }
+  });
+  $("liveApiKey").addEventListener("click", () => {
+    if ($("liveApiKey").disabled) setLiveKeyEditing(true);
+  });
+  $("liveApiKey").addEventListener("input", (e) => {
+    updateLiveKeyState(!!e.target.value.trim());
+    clearTimeout(liveKeySaveTimer);
+    liveKeySaveTimer = setTimeout(() => saveLiveKey(e.target.value.trim()), 500);
+  });
+  $("liveApiKey").addEventListener("change", async (e) => {
+    clearTimeout(liveKeySaveTimer);
+    const value = e.target.value.trim();
+    await saveLiveKey(value);
+    updateLiveKeyState(!!value);
+  });
+
+  $("provider").addEventListener("change", async (e) => {
+    await save({ translationProvider: e.target.value });
+    const cur = (await chrome.storage.sync.get(["ydsSettings"])).ydsSettings || {};
+    applyProviderUI({ ...DEFAULTS, ...cur });
+    $("status").textContent = ydsT("statusProviderSwitched", { name: providerName(e.target.value) });
+    refreshStatusSeries();
+    startStatusPolling();
+  });
+  $("paidApiMode").addEventListener("change", async (e) => {
+    await save({ paidApiMode: e.target.value });
+    $("status").textContent = ydsT(
+      e.target.value === "always" ? "paidPolicyOnAlways"
+      : e.target.value === "manual" ? "paidPolicyOnManual"
+      : "paidPolicyOnAsk");
+  });
+  $("usePaidApi").addEventListener("click", async () => {
+    if (!activeTabId) return;
+    const provider = $("provider").value;
+    // The key field saves on a debounce. Pasting a key and pressing this
+    // straight away used to send the request before the key was stored, and the
+    // page answered "API key not set" — the button appeared to do nothing.
+    if (apiKeySaveTimer) {
+      clearTimeout(apiKeySaveTimer);
+      apiKeySaveTimer = null;
+      await saveApiKey(provider, $("apiKey").value.trim());
+    }
+    $("status").textContent = ydsT("statusStartingPaid", { name: providerName(provider) });
+    const resp = await sendContent(activeTabId, { type: "YDS_APPROVE_PAID_API" });
+    if (!resp?.ok) {
+      pinStatus(resp?.error || ydsT("statusPaidFailed"));
+      return;
+    }
+    refreshStatusSeries();
+    startStatusPolling();
+  });
+  $("editApiKey").addEventListener("click", async () => {
+    if (apiKeyEditing) {
+      const value = $("apiKey").value.trim();
+      await saveApiKey($("provider").value, value);
+      updateApiKeyState(!!value);
+      setApiKeyEditing(false);
+      $("status").textContent = value
+        ? ydsT("keySaved", { name: providerName($("provider").value) })
+        : ydsT("keyCleared", { name: providerName($("provider").value) });
+    } else {
+      setApiKeyEditing(true);
+    }
+  });
+  $("apiKey").addEventListener("click", () => {
+    if ($("apiKey").disabled) setApiKeyEditing(true);
+  });
+  $("apiKey").addEventListener("input", (e) => {
+    updateApiKeyState(!!e.target.value.trim());
+    if (apiKeySaveTimer) clearTimeout(apiKeySaveTimer);
+    apiKeySaveTimer = setTimeout(async () => {
+      await saveApiKey($("provider").value, e.target.value.trim());
+      $("status").textContent = ydsT("keySaved", { name: providerName($("provider").value) });
+    }, 500);
+  });
+  $("apiKey").addEventListener("change", async (e) => {
+    if (apiKeySaveTimer) clearTimeout(apiKeySaveTimer);
+    const value = e.target.value.trim();
+    await saveApiKey($("provider").value, value);
+    updateApiKeyState(!!value);
+    $("status").textContent = value
+      ? ydsT("keySaved", { name: providerName($("provider").value) })
+      : ydsT("keyCleared", { name: providerName($("provider").value) });
+  });
+}
+
+init().catch((err) => {
+  $("status").textContent = ydsT("initFailed") + (err?.message || err);
+});

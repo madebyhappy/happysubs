@@ -1,0 +1,1264 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Google Analytics, on this page only (privacy.html, "This Website"). It
+       loads on the live site alone, so a local preview sends nothing; the
+       events below still land in window.dataLayer there, which is how to
+       check them. -->
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    if (location.hostname === "madebyhappy.github.io") {
+      gtag("js", new Date());
+      gtag("config", "G-KTTF39Q4P2");
+      const tag = document.createElement("script");
+      tag.async = true;
+      tag.src = "https://www.googletagmanager.com/gtag/js?id=G-KTTF39Q4P2";
+      document.head.appendChild(tag);
+    }
+  </script>
+  <title>HappySubs — 双语字幕与实时听译 For YouTube / Vimeo / Zoom / Bilibili</title>
+  <meta name="description" content="在 YouTube、Vimeo、B站 和 Zoom 录像上同时显示两种语言的字幕；没有字幕的视频还能实时听译。使用自带字幕或Google免费翻译，支持使用Claude / OpenAI / Gemini / DeepSeek 翻译。" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon32.png" />
+  <link rel="icon" type="image/png" sizes="128x128" href="icons/icon128.png" />
+  <!-- What a shared link unfurls into: the film's end card, with the button on it. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://madebyhappy.github.io/happysubs/" />
+  <meta property="og:title" content="HappySubs — Dual subtitles for YouTube, Vimeo, Zoom & Bilibili" />
+  <meta property="og:description" content="Two subtitle languages at once, in sync to the frame. Free on the Chrome Web Store." />
+  <meta property="og:image" content="https://madebyhappy.github.io/happysubs/media/happysubs-og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="theme-color" content="#0f0f0f" />
+
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --bg-elev: #1a1a1a;
+      --card: #202020;
+      --text: #f5f5f5;
+      --text-dim: #a3a3a3;
+      --brand: #ff0033;
+      --brand-2: #ff4d6d;
+      /* Three weights of edge. On a near-black page one weight cannot do all
+         three jobs: dividers should stay quiet, surfaces have to be findable,
+         and anything clickable needs WCAG 1.4.11's 3:1 against the page. */
+      --border: rgba(255,255,255,0.08);         /* dividers        1.2:1 */
+      --border-surface: rgba(255,255,255,0.22); /* cards, code     2.0:1 */
+      --border-control: rgba(255,255,255,0.34); /* buttons         3.1:1 */
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--brand-2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+    /* Nav */
+    nav {
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      background: rgba(15,15,15,0.85);
+      z-index: 10;
+    }
+    nav .container { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    /* Section links: hidden over the hero, which is its own table of contents,
+       and shown with the install button once it has scrolled away. */
+    .nav-links {
+      display: flex; gap: 22px; margin: 0 auto 0 36px;
+      opacity: 0; visibility: hidden; transform: translateY(-6px);
+      transition: opacity .2s, transform .2s, visibility .2s;
+    }
+    .nav-links.show { opacity: 1; visibility: visible; transform: none; }
+    .nav-links a { color: var(--text-dim); font-size: 14px; font-weight: 500; white-space: nowrap; }
+    .nav-links a:hover, .nav-links a.here { color: var(--text); text-decoration: none; }
+    @media (max-width: 860px) { .nav-links { display: none; } }
+    /* A jump lands with the heading clear of the sticky nav. */
+    section[id] { scroll-margin-top: 76px; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+    .logo { display: flex; align-items: center; color: inherit; text-decoration: none; }
+    /* The wordmark is 6.72:1, so height alone sizes it. It draws in
+       currentColor, which keeps it legible on this dark nav. */
+    .logo-mark { height: 22px; width: auto; display: block; }
+    nav a.gh { color: var(--text-dim); font-size: 14px; }
+    .lang-toggle {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--border-control);
+      border-radius: 999px;
+      padding: 5px 12px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      margin-right: 12px;
+    }
+    .lang-toggle:hover {
+      color: var(--text);
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.55);
+    }
+    .nav-right { display: flex; align-items: center; }
+
+    /* Hero */
+    .hero { padding: 80px 0 60px; text-align: center; }
+    /* The nav already carries the wordmark, so the hero takes the app mark
+       instead of repeating it — and the mark is what people look for in the
+       Chrome toolbar afterwards. 64px off a 128px asset stays crisp on retina. */
+    /* The mark has a transparent ground, so it reads as the red H itself on
+       this page rather than as a tile — no radius to round, just the glow. */
+    .hero-mark {
+      width: 72px; height: 72px; display: block; margin: 0 auto 22px;
+      filter: drop-shadow(0 10px 30px rgba(255, 0, 51, 0.38));
+    }
+    .hero h1 {
+      font-size: 52px;
+      line-height: 1.1;
+      margin: 0 0 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, #bbb 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p.sub {
+      font-size: 20px;
+      color: var(--text-dim);
+      max-width: 620px;
+      margin: 0 auto 36px;
+    }
+    .hero p.sub strong { color: #dcdcdc; font-weight: 600; }
+    .cta {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--brand);
+      color: white;
+      padding: 14px 28px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 16px;
+      transition: transform .15s, box-shadow .15s;
+      box-shadow: 0 8px 20px rgba(255,0,51,0.3);
+    }
+    .cta:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(255,0,51,0.4); text-decoration: none; }
+    .cta-secondary {
+      display: inline-flex; align-items: center; gap: 8px;
+      color: var(--text);
+      padding: 14px 28px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 16px;
+      margin-left: 12px;
+      border: 1px solid var(--border-control);
+    }
+    .cta-secondary:hover {
+      background: rgba(255,255,255,0.09);
+      border-color: rgba(255,255,255,0.55);
+      text-decoration: none;
+    }
+    /* Setup commands for the live-transcription service. */
+    pre.cmd {
+      background: #1e1e1e;
+      border: 1px solid var(--border-surface);
+      border-radius: 8px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #e6e6e6;
+      margin: 12px 0;
+    }
+    /* macOS / Windows switch above the setup commands. Deliberately not a pill:
+       the pills on this page all navigate somewhere, and this one only swaps
+       what is shown below it. A segmented control in the same corner radius and
+       monospace face as pre.cmd reads as part of the command block instead. */
+    .os-tabs {
+      display: inline-flex;
+      padding: 3px;
+      margin: 20px 0 2px;
+      background: #171717;
+      border: 1px solid var(--border-surface);
+      border-radius: 8px;
+    }
+    .os-tab {
+      padding: 6px 16px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: #c8c8c8;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      cursor: pointer;
+      transition: color 0.12s ease, background 0.12s ease;
+    }
+    .os-tab:hover { color: var(--text); background: rgba(255,255,255,0.07); }
+    .os-tab[aria-selected="true"] {
+      /* Inverted rather than brand-red: on a page this dark, anything short of
+         a light fill disappears — but red here would read as "do something",
+         and this only chooses which commands are shown. */
+      background: var(--text);
+      color: #0f0f0f;
+      font-weight: 700;
+    }
+    .os-panel[hidden] { display: none; }
+    .os-panel ol, #live .container > ol { padding-left: 22px; margin: 10px 0; }
+    .os-panel ol li, #live .container > ol li { margin: 10px 0; }
+    .os-panel ol li p { margin: 0 0 8px; }
+    /* The numbered steps of the setup walkthrough. */
+    #live h4 { font-size: 18px; font-weight: 700; margin: 30px 0 8px; }
+    #live .os-panel h4:first-child { margin-top: 18px; }
+    .features-2 {
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      max-width: 1040px;
+      margin: 0 auto;
+    }
+    .live-note {
+      border-left: 2px solid var(--border-surface);
+      padding-left: 14px;
+      color: var(--text-dim);
+      font-size: 14px;
+      margin: 20px 0 0;
+    }
+    .version-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-dim);
+      border: 1px solid var(--border-surface);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    /* Trust line under the two buttons: the three doubts that stop an install. */
+    .cta-meta {
+      margin: 16px 0 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+    }
+
+    /* ---- The film ----
+       The 30-second piece is part of the page, not a player. It rises into
+       place as you scroll to it, plays by itself once it is mostly in view,
+       pauses when it leaves, and plays once: it stops on its end card, where
+       the "Add to Chrome" button it draws is a real link. A browser only lets
+       video start on its own while silent, so while it plays the one control
+       is sound; once it stops, the one control is replay. */
+    .film {
+      position: relative;
+      max-width: 1120px;
+      margin: 56px auto 0;
+      padding: 0 24px;
+    }
+    .film-bloom {
+      position: absolute;
+      left: 6%; right: 6%; top: 8%; height: 84%;
+      background: radial-gradient(closest-side, rgba(255,0,51,0.28), transparent);
+      filter: blur(30px);
+      pointer-events: none;
+    }
+    .film-frame {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      border-radius: 20px;
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 30px 90px rgba(0,0,0,0.65);
+    }
+    .film-frame video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+    /* Scroll-linked where the browser can (Chrome — nearly everyone who comes
+       here for a Chrome extension); elsewhere it simply sits in place. */
+    @supports (animation-timeline: view()) {
+      .film-frame {
+        animation: film-rise linear both;
+        animation-timeline: view();
+        animation-range: entry 0% cover 45%;
+      }
+      @keyframes film-rise {
+        from { transform: translateY(80px) scale(0.88); opacity: 0.3; }
+        to { transform: none; opacity: 1; }
+      }
+    }
+
+    /* Frosted pill in the corner, the popup's glass. */
+    .film-btn {
+      position: absolute;
+      right: 20px;
+      bottom: 20px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      height: 44px;
+      padding: 0 17px 0 15px;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(15,15,15,0.55);
+      -webkit-backdrop-filter: blur(12px) saturate(1.4);
+      backdrop-filter: blur(12px) saturate(1.4);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22), 0 8px 24px rgba(0,0,0,0.35);
+      color: #fff;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: background .15s, box-shadow .15s, transform .15s;
+    }
+    .film-btn:hover {
+      background: var(--brand);
+      box-shadow: 0 8px 24px rgba(255,0,51,0.45);
+      transform: translateY(-1px);
+    }
+    .film-btn:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+    .film-btn svg { display: block; width: 18px; height: 18px; }
+
+    /* Sound. Muted it offers to turn sound on; with sound, three bars move to
+       the music and it offers to mute. For visitors who asked for less motion
+       or data the film waits, and the same button plays it. */
+    .film-sound .eq { display: flex; align-items: flex-end; gap: 3px; width: 18px; height: 15px; }
+    .film-sound .eq i {
+      flex: 1;
+      height: 100%;
+      border-radius: 1px;
+      background: #fff;
+      transform-origin: 50% 100%;
+      animation: eq .7s ease-in-out infinite alternate;
+    }
+    .film-sound .eq i:nth-child(2) { animation-duration: .45s; animation-delay: -.2s; }
+    .film-sound .eq i:nth-child(3) { animation-duration: .6s; animation-delay: -.35s; }
+    @keyframes eq { from { transform: scaleY(0.25); } to { transform: scaleY(1); } }
+    .film-sound .eq, .film-sound .ic-play, .film-sound .lbl-mute, .film-sound .lbl-play { display: none; }
+    .film-sound[data-sound="on"] .eq,
+    .film-sound[data-sound="on"] .lbl-mute { display: flex; }
+    .film-sound[data-sound="on"] .ic-muted,
+    .film-sound[data-sound="on"] .lbl-on { display: none; }
+    .film[data-mode="static"] .film-sound .ic-play,
+    .film[data-mode="static"] .film-sound .lbl-play { display: block; }
+    .film[data-mode="static"] .film-sound .ic-muted,
+    .film[data-mode="static"] .film-sound .lbl-on { display: none; }
+
+    /* Once it has stopped on the end card, sound has nothing left to do and
+       replay takes its corner. */
+    .film-replay { display: none; }
+    .film-replay svg { transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+    .film-replay:hover svg { transform: rotate(-200deg); }
+    .film.is-ended .film-replay { display: inline-flex; }
+    .film.is-ended .film-sound { display: none; }
+
+    /* The link laid over the button the film draws on its end card. The
+       picture already shows the button, so this only adds the response: a
+       ring that pulses three times as it comes up, and a lift on hover. Pointer only —
+       the same link is a tab stop in the hero and the nav. */
+    .film-hotspot {
+      position: absolute;
+      left: 37.48%; top: 68.89%;
+      width: 25.04%; height: 7.41%;
+      border-radius: 999px;
+      visibility: hidden;
+      transition: box-shadow .15s, background .15s;
+    }
+    .film-hotspot.on { visibility: visible; }
+    .film-hotspot.on::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.9);
+      animation: hotspot-ping 1.6s ease-out 3;
+      opacity: 0;
+    }
+    .film-hotspot:hover {
+      background: rgba(255,255,255,0.14);
+      box-shadow: 0 0 0 3px rgba(255,255,255,0.85), 0 0 36px rgba(255,0,51,0.75);
+      text-decoration: none;
+    }
+    @keyframes hotspot-ping {
+      0% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(1.28, 1.7); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .film-frame, .film-sound .eq i { animation: none; }
+    }
+
+    /* ---- Nav button ----
+       Appears once the hero's own button has scrolled away, so the way to
+       install is never more than one click from wherever you are reading. */
+    .nav-cta {
+      display: inline-flex;
+      align-items: center;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 700;
+      font-size: 14px;
+      padding: 7px 15px;
+      border-radius: 999px;
+      box-shadow: 0 6px 16px rgba(255,0,51,0.3);
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-6px);
+      transition: opacity .2s, transform .2s, visibility .2s, filter .15s;
+    }
+    .nav-cta.show { opacity: 1; visibility: visible; transform: none; }
+    .nav-cta:hover { text-decoration: none; filter: brightness(1.1); }
+
+    /* ---- Closing call ----
+       The last thing on the page is the reason to have read it. */
+    .closing {
+      text-align: center;
+      padding: 100px 0 108px;
+      position: relative;
+      overflow: hidden;
+    }
+    .closing::before {
+      content: "";
+      position: absolute;
+      left: 50%; top: 42%;
+      width: 960px; height: 620px;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(closest-side, rgba(255,0,51,0.2), transparent);
+      pointer-events: none;
+    }
+    .closing .container { position: relative; }
+    .closing h2 {
+      font-size: 60px;
+      line-height: 1.06;
+      letter-spacing: -0.03em;
+      margin: 22px 0 16px;
+    }
+    .closing p { color: var(--text-dim); font-size: 17px; margin: 0 0 34px; }
+    .cta-lg { font-size: 18px; padding: 17px 38px; }
+    /* The wordmark's two bars — the original line over the translation —
+       blinking like the text cursor they are in the film. */
+    .bars { display: inline-flex; flex-direction: column; animation: blink 1.1s steps(1) infinite; }
+    .bars i { display: block; width: 54px; height: 20px; background: #f5f5f5; }
+    .bars i + i { background: #e4262c; }
+    @keyframes blink { 50% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .bars, .film-hotspot.on::after { animation: none; }
+    }
+
+    /* Features */
+    section { padding: 60px 0; border-top: 1px solid var(--border); }
+    section h2 {
+      font-size: 32px;
+      margin: 0 0 12px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+    section p.section-desc {
+      color: var(--text-dim);
+      font-size: 17px;
+      margin: 0 0 40px;
+    }
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+    .feature {
+      background: var(--card);
+      padding: 24px;
+      border-radius: 12px;
+      border: 1px solid var(--border-surface);
+    }
+    .feature .icon {
+      font-size: 24px;
+      margin-bottom: 12px;
+    }
+    .feature h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .feature p {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 14.5px;
+    }
+
+    /* Steps */
+    .steps { counter-reset: step; }
+    .step {
+      display: flex;
+      gap: 20px;
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .step:last-child { border-bottom: none; }
+    .step .num {
+      flex: 0 0 40px;
+      height: 40px;
+      background: var(--brand);
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 16px;
+    }
+    .step .body h3 {
+      margin: 0 0 6px;
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .step .body p {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 15px;
+    }
+    code, kbd {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      background: var(--bg-elev);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      border: 1px solid var(--border-surface);
+    }
+    kbd {
+      font-size: 12px;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.1);
+    }
+
+    /* FAQ */
+    details {
+      background: var(--card);
+      border: 1px solid var(--border-surface);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 10px;
+    }
+    details summary {
+      cursor: pointer;
+      font-weight: 600;
+      list-style: none;
+    }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::after {
+      content: "+";
+      float: right;
+      color: var(--text-dim);
+      font-weight: 400;
+      font-size: 20px;
+      line-height: 1;
+    }
+    details[open] summary::after { content: "−"; }
+    details p {
+      margin: 12px 0 0;
+      color: var(--text-dim);
+      font-size: 15px;
+    }
+
+    /* Footer */
+    footer {
+      padding: 40px 0 60px;
+      color: var(--text-dim);
+      text-align: center;
+      font-size: 14px;
+      border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--text-dim); }
+    /* The name in the byline is a link; without a mark of its own it would be
+       indistinguishable from the dim text around it. */
+    footer a.more {
+      color: var(--text);
+      border-bottom: 1px solid rgba(255,255,255,0.28);
+    }
+    footer a.more:hover { border-bottom-color: var(--text); text-decoration: none; }
+
+    @media (max-width: 640px) {
+      .hero { padding: 50px 0 40px; }
+      .hero-mark { width: 54px; height: 54px; margin-bottom: 14px; }
+      .hero h1 { font-size: 36px; }
+      .hero p.sub { font-size: 17px; }
+      .cta-secondary { margin-left: 0; margin-top: 10px; }
+      section { padding: 40px 0; }
+      section h2 { font-size: 26px; }
+      .film { margin-top: 40px; padding: 0 16px; }
+      .film-frame { border-radius: 14px; }
+      .film-btn { right: 10px; bottom: 10px; height: 36px; padding: 0 12px 0 11px; gap: 7px; font-size: 12px; }
+      .film-btn svg { width: 15px; height: 15px; }
+      .film-sound .eq { width: 15px; height: 12px; }
+      .closing { padding: 64px 0 72px; }
+      .closing h2 { font-size: 38px; }
+      .cta-lg { font-size: 16px; padding: 15px 30px; }
+    }
+    /* The nav carries the wordmark, the language switch and, once scrolled,
+       the install button — on a phone that only fits if each gives a little. */
+    @media (max-width: 420px) {
+      .logo-mark { height: 17px; }
+      .lang-toggle { margin-right: 8px; padding: 4px 10px; }
+      .nav-cta { font-size: 13px; padding: 6px 12px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <div class="container">
+      <a class="logo" href="./" aria-label="HappySubs">
+        <svg class="logo-mark" viewBox="139 553 7754 1156" aria-hidden="true" focusable="false">
+          <title>HappySubs</title>
+          <!-- Wordmark in currentColor so one file serves light and dark; the bar
+          below it keeps the brand red. -->
+          <g fill="currentColor">
+          <path d="M139.4,1483.69v-914.31h351.02v347.85h233.17v-347.85h351.02v914.31h-351.02v-353.56h-233.17v353.56H139.4Z"/>
+          <path d="M1397.82,1491.99c-47.39,0-89.15-9.46-125.27-28.39-36.07-18.88-64.29-44.42-84.65-76.6-20.28-32.19-30.41-68.37-30.41-108.54v-.57c0-46.3,11.57-85.37,34.72-117.22,23.19-31.81,56.88-56.84,101.06-75.08,44.18-18.25,98.21-29.57,162.08-33.96l292.03-19.77v153.27l-244.39,17.55c-25.01,1.56-43.09,7.03-54.24,16.41s-16.73,21.71-16.73,37v.51c0,16.14,6.46,28.39,19.39,36.75,12.93,8.41,30.27,12.61,52.02,12.61,18.59,0,34.79-2.91,48.6-8.74,13.81-5.83,24.61-13.88,32.38-24.14,7.77-10.31,11.66-21.82,11.66-34.53v-220.81c0-17.28-5.64-30.98-16.92-41.12-11.28-10.18-28.79-15.27-52.53-15.27-24.25,0-42.92,4.46-56.01,13.37-13.14,8.91-20.91,19.41-23.32,31.49l-1.27,6.4h-250.72l.63-8.43c3.84-49.42,19.83-92.19,47.96-128.31,28.13-36.12,67.44-64.04,117.92-83.76,50.48-19.73,110.95-29.59,181.4-29.59s125.6,10.2,175.83,30.6c50.18,20.44,89.28,48.87,117.28,85.28,27.96,36.45,41.95,78.59,41.95,126.41v478.89h-282.21v-93.27h-5.45c-13.18,21.67-28.98,40.15-47.39,55.44-18.46,15.25-39.79,26.76-64,34.53-24.25,7.73-51.39,11.6-81.42,11.6Z"/>
+          <path d="M1972.57,1705.45v-921.97h262.25v126.34h5.77c10.94-29.61,26.21-55,45.81-76.16,19.64-21.16,42.98-37.36,70.01-48.6,27.03-11.19,57.05-16.79,90.04-16.79,58.76,0,108.5,14.05,149.22,42.14,40.76,28.09,71.79,69.3,93.08,123.62,21.29,54.32,31.93,120.64,31.93,198.95v.63c0,77.85-10.43,143.94-31.3,198.26-20.87,54.32-51.45,95.74-91.75,124.25-40.34,28.55-89.68,42.83-148.01,42.83-33.84,0-64.59-5.51-92.25-16.54-27.71-10.98-51.47-26.63-71.28-46.95-19.85-20.32-35.23-44.65-46.13-72.99h-5.13v342.98h-262.25ZM2344.37,1287.96c22.56,0,42.07-6.27,58.55-18.82,16.47-12.55,29.21-30.33,38.21-53.35,9-22.98,13.5-50.37,13.5-82.18v-.63c0-32.23-4.6-59.86-13.81-82.88-9.21-23.02-22.05-40.59-38.52-52.72-16.52-12.12-35.82-18.18-57.91-18.18s-41.54,6.06-58.23,18.18c-16.73,12.12-29.67,29.67-38.84,52.65-9.17,23.02-13.75,50.88-13.75,83.57v.63c0,32.23,4.58,59.86,13.75,82.88,9.17,23.02,21.99,40.57,38.46,52.65,16.52,12.12,36.05,18.18,58.61,18.18Z"/>
+          <path d="M2804.12,1705.45v-916.9h243.62v124.51h5.32c11.32-29.15,26.84-54.13,46.57-74.96,19.73-20.82,43.09-36.77,70.08-47.84,26.99-11.07,56.88-16.6,89.66-16.6,58.42,0,108.09,14.05,149.03,42.14,40.89,28.09,72.11,69.11,93.65,123.05,21.54,53.98,32.31,119.56,32.31,196.74v.63c0,76.79-10.6,142.16-31.81,196.1-21.16,53.94-52,95.15-92.51,123.62-40.47,28.47-89.68,42.71-147.63,42.71-33.5,0-64.04-5.45-91.62-16.35-27.63-10.86-51.41-26.32-71.34-46.38-19.98-20.06-35.63-44.1-46.95-72.11h-4.75v341.64h-243.62ZM3167.18,1301.59c24.54,0,45.79-6.72,63.74-20.15,17.95-13.47,31.81-32.55,41.56-57.22,9.72-24.67,14.57-54.01,14.57-88.01v-.63c0-34.51-4.96-64.1-14.89-88.77s-23.87-43.53-41.82-56.58c-17.91-13.05-38.97-19.58-63.17-19.58s-45.07,6.57-63.23,19.71c-18.16,13.09-32.27,31.98-42.33,56.65-10.05,24.67-15.08,54.39-15.08,89.15v.63c0,34.3,5.03,63.78,15.08,88.45,10.1,24.67,24.12,43.57,42.07,56.71,17.95,13.09,39.12,19.64,63.49,19.64Z"/>
+          <path d="M3750.43,1708.37c-21.88,0-42.9-1.01-63.04-3.04-20.15-2.03-36.73-4.16-49.74-6.4v-162.84c7.52,1.48,17.74,3.04,30.67,4.69,12.93,1.69,28.11,2.53,45.56,2.53,23.74,0,42.43-3.78,56.07-11.34,13.6-7.56,23.06-18.92,28.39-34.09l5.07-14.07-237.29-690.2h248.5l133.76,564.87-24.9-43.34h35.36l-25.41,43.34,133.44-564.87h237.35l-219.8,687.03c-18.88,59.31-43.7,105.52-74.45,138.63-30.75,33.07-67.63,56.2-110.63,69.38-43.04,13.14-92.68,19.71-148.9,19.71Z"/>
+          <path d="M4327.21,1214.53h221.19c2.91,20.99,11.83,39.66,26.74,56.01,14.87,16.39,34.38,29.21,58.55,38.46,24.12,9.25,51.13,13.88,81.04,13.88s54.83-3.93,76.54-11.79c21.75-7.86,38.76-18.86,51.01-33.01,12.25-14.15,18.37-30.96,18.37-50.44,0-22.68-7.94-41.25-23.82-55.69-15.88-14.45-46.97-28.77-93.27-42.96l-87.44-26.8c-76.25-23.32-133.95-55.42-173.1-96.31-39.16-40.93-58.74-92.55-58.74-154.86s15.76-112.02,47.27-156.63c31.47-44.61,74.85-79.18,130.14-103.72,55.25-24.54,118.44-36.81,189.58-36.81,74.68,0,139.44,11.3,194.27,33.9,54.83,22.64,97.2,55.08,127.1,97.32,29.95,42.24,45.07,92.91,45.37,152h-214.23c-.63-21.33-7.16-40.04-19.58-56.14-12.42-16.05-29.57-28.6-51.45-37.64-21.84-9.04-47.48-13.56-76.92-13.56s-52.19,4.18-72.55,12.55c-20.32,8.41-35.82,19.58-46.51,33.52-10.69,13.94-16.03,29.44-16.03,46.51,0,22.13,8.58,41.06,25.72,56.77,17.15,15.67,46.3,29.76,87.44,42.26l90.86,26.74c80.55,23.65,139.65,54.53,177.29,92.63,37.64,38.1,56.46,89.15,56.46,153.14,0,60.32-15.99,113.4-47.96,159.23s-76.96,81.65-134.96,107.46c-58,25.77-126.32,38.65-204.97,38.65s-144.99-11.21-202.19-33.64c-57.19-22.43-101.48-54.93-132.87-97.51-31.43-42.54-47.54-93.71-48.34-153.52Z"/>
+          <path d="M5959.97,793.74l-146.81,689.94h-211.18l23.32-108.98h-4.5c-13.14,24.8-30.69,46.66-52.65,65.58-21.97,18.97-47.16,33.64-75.59,44.04-28.39,10.39-58.99,15.59-91.81,15.59-43.76,0-81.82-8.38-114.18-25.15-32.36-16.81-57.3-40.28-74.83-70.39-17.57-30.16-26.36-65.2-26.36-105.12,0-14.4.76-29.61,2.28-45.62,1.56-16.01,3.82-30.6,6.78-43.78l88.14-416.09h218.03l-81.42,380.87c-1.27,7.31-2.34,15.1-3.23,23.38-.84,8.28-1.27,15.88-1.27,22.81,0,32.36,8.85,57.15,26.55,74.39,17.74,17.23,43.13,25.85,76.16,25.85,23.44,0,44.65-5.26,63.62-15.78,18.92-10.56,34.85-25.45,47.77-44.67,12.93-19.22,22.18-42.07,27.75-68.56l84.71-398.29h218.72Z"/>
+          <path d="M6385.25,1494.14c-33.96,0-65.45-5.72-94.47-17.17-29.06-11.45-53.71-27.54-73.94-48.28-20.28-20.78-34.66-44.94-43.15-72.49h-4.56l-27.12,127.48h-211.5l195.03-914.31h217.9l-70.08,324.73h5.26c20.74-34.64,49.59-61.78,86.55-81.42,36.96-19.6,77.64-29.4,122.03-29.4,48.24,0,89.95,10.86,125.14,32.57,35.19,21.67,62.39,52.67,81.61,93.01,19.18,40.34,28.77,88.66,28.77,144.97,0,61.38-8.28,118.61-24.84,171.71-16.56,53.14-39.94,99.88-70.14,140.22-30.16,40.34-65.81,71.81-106.95,94.41-41.18,22.64-86.36,33.96-135.53,33.96ZM6332.22,1320.09c23.57,0,45.47-6,65.71-17.99,20.19-12,37.78-28.74,52.78-50.25,14.95-21.46,26.61-46.32,34.98-74.58,8.36-28.22,12.55-58.36,12.55-90.42,0-41.35-10.1-74.26-30.29-98.72-20.19-24.5-47.71-36.75-82.56-36.75-23.23,0-45.09,6.23-65.58,18.69-20.53,12.46-38.48,29.65-53.86,51.58-15.38,21.88-27.44,46.95-36.18,75.21-8.7,28.26-13.05,58.25-13.05,89.97,0,39.88,10.54,72.04,31.62,96.5,21.08,24.5,49.04,36.75,83.89,36.75Z"/>
+          <path d="M6838.16,1003.91c0-45.41,12.5-85.05,37.51-118.93s60.09-60.24,105.24-79.08c45.11-18.84,98.25-28.26,159.42-28.26,57.41,0,108.2,9.61,152.38,28.83,44.18,19.18,79.05,45.89,104.61,80.15,25.56,34.22,39.01,73.71,40.36,118.49h-196.17c-1.06-15.71-6.1-29.65-15.14-41.82-9.08-12.17-21.27-21.63-36.56-28.39-15.25-6.76-32.8-10.14-52.65-10.14-18.88,0-35.21,2.49-48.98,7.48-13.77,5.03-24.37,12.06-31.81,21.1-7.39,9.04-11.09,19.62-11.09,31.74,0,15.16,6.38,27.58,19.14,37.26,12.76,9.67,36.71,20.36,71.85,32.06l73.5,24.52c65.26,21.71,111.69,47.04,139.27,75.97,27.63,28.89,41.44,66.38,41.44,112.47s-13.03,87.04-39.09,121.97c-26.06,34.93-62.5,62.09-109.3,81.48-46.84,19.39-101.72,29.08-164.61,29.08s-119.63-9.69-167.27-29.08c-47.61-19.39-84.76-46.76-111.45-82.12-26.7-35.36-40.99-76.63-42.9-123.81h207.07c2.15,25.64,13.94,46.59,35.36,62.85,21.46,16.31,49.89,24.46,85.28,24.46,18.84,0,35.04-2.51,48.6-7.54,13.52-5.07,23.95-12.21,31.3-21.42,7.39-9.21,11.09-19.92,11.09-32.12,0-14.32-6.21-26.1-18.63-35.36-12.46-9.25-35.57-19.45-69.32-30.6l-61.84-20.66c-63.87-21.5-110.92-48.45-141.17-80.85-30.29-32.36-45.43-72.27-45.43-119.75Z"/>
+          <rect x="7532.75" y="1241.83" width="359.99" height="136.04"/>
+          </g>
+          <g fill="#e4262c">
+          <rect x="7532.75" y="1377.87" width="359.99" height="136.04"/>
+          </g>
+        </svg>
+      </a>
+      <div class="nav-links" id="navLinks">
+        <a href="#features" data-en="Features">功能</a>
+        <a href="#install" data-en="Install">安装</a>
+        <a href="#live" data-en="Live transcription">实时听译</a>
+        <a href="#changelog" data-en="Changelog">更新日志</a>
+        <a href="#faq" data-en="FAQ">常见问题</a>
+      </div>
+      <div class="nav-right">
+        <button class="lang-toggle" id="langToggle" type="button" aria-label="Switch language">EN</button>
+        <a class="nav-cta" id="navCta" href="https://chromewebstore.google.com/detail/malocefbdblplamcmmmpilepcgllfmnf?utm_source=website&amp;utm_medium=nav&amp;utm_campaign=film_launch" target="_blank" rel="noopener" data-en="Add to Chrome">添加到 Chrome</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="container">
+      <img class="hero-mark" src="icons/icon128.png" width="128" height="128" alt="" />
+      <h1 data-en="Dual subtitles for your videos">为视频添加双语字幕</h1>
+      <div class="version-pill">v2.2.0</div>
+      <p class="sub" data-en="Currently supports <strong>YouTube</strong>, <strong>Vimeo</strong>, <strong>Bilibili</strong> and <strong>Zoom recordings</strong>, plus more sites such as Coursera. Uses the video's own subtitles plus free Google Translate, with optional Claude / OpenAI / Gemini / DeepSeek AI translation. Videos with no subtitles at all can be transcribed as they play.">
+        目前支持 <strong>YouTube</strong>、<strong>Vimeo</strong>、<strong>Bilibili</strong> 和 <strong>Zoom 录像</strong>，以及 Coursera 等更多网站。使用视频自带字幕 + Google 免费翻译，也可选 Claude / OpenAI / Gemini / DeepSeek AI 翻译。完全没有字幕的视频，可以边播边听译。
+      </p>
+      <a class="cta" id="heroCta" href="https://chromewebstore.google.com/detail/malocefbdblplamcmmmpilepcgllfmnf?utm_source=website&amp;utm_medium=hero&amp;utm_campaign=film_launch" target="_blank" rel="noopener" data-en="Add to Chrome — it’s free">
+        添加到 Chrome · 免费
+      </a>
+      <a class="cta-secondary" href="#install" data-en="How to use">如何使用</a>
+      <p class="cta-meta" data-en="On the Chrome Web Store · No sign-up · Open source">Chrome 应用商店上架 · 无需注册 · 开源</p>
+    </div>
+
+    <!-- Part of the page rather than a player: it plays by itself once it is
+         mostly in view, once, and stops on its end card. The one control is
+         sound, then replay. Without
+         JavaScript it is a plain video with the browser's own controls. -->
+    <figure class="film" id="film" data-mode="auto">
+      <div class="film-bloom" aria-hidden="true"></div>
+      <div class="film-frame">
+        <video controls playsinline muted preload="none" poster="media/happysubs-film-poster.jpg"
+               aria-label="HappySubs 30 秒短片：任何外语视频，一键加上双语字幕"
+               data-en-aria="HappySubs in 30 seconds: any video, in your language, with dual subtitles">
+          <source src="media/happysubs-film-v2.webm" type='video/webm; codecs="av01.0.09M.10, opus"' />
+          <source src="media/happysubs-film-v2.mp4" type="video/mp4" />
+        </video>
+        <a class="film-hotspot" href="https://chromewebstore.google.com/detail/malocefbdblplamcmmmpilepcgllfmnf?utm_source=website&amp;utm_medium=film_endcard&amp;utm_campaign=film_launch"
+           target="_blank" rel="noopener" tabindex="-1" aria-hidden="true"></a>
+        <button class="film-btn film-sound" type="button" data-sound="off">
+          <svg class="ic-muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h4l5-4.5v15L7 15H3z" fill="currentColor"/><path d="M15.5 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <svg class="ic-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/></svg>
+          <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="lbl-on" data-en="Sound on">打开声音</span>
+          <span class="lbl-mute" data-en="Mute">静音</span>
+          <span class="lbl-play" data-en="Play">播放</span>
+        </button>
+        <button class="film-btn film-replay" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2L7 6l5 4V7a5 5 0 11-5 5H5a7 7 0 107-7z" fill="currentColor"/></svg>
+          <span data-en="Replay">重播</span>
+        </button>
+      </div>
+    </figure>
+  </header>
+
+  <section id="features">
+    <div class="container">
+      <h2 data-en="Why HappySubs">为什么用 HappySubs</h2>
+      <p class="section-desc" data-en="The rough edges of other dual-subtitle extensions, fixed.">主流双语字幕扩展的痛点，这里全解决了。</p>
+      <div class="features">
+        <div class="feature">
+          <div class="icon">🎬</div>
+          <h3 data-en="Many platforms">多平台支持</h3>
+          <p data-en="YouTube, Vimeo, Bilibili and Zoom recordings, and more sites such as Coursera — YouTube embedded in other pages included.">支持 YouTube、Vimeo、Bilibili、Zoom 录像，以及 Coursera 等更多网站；嵌在其他网页里的 YouTube 也支持。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🎙️</div>
+          <h3 data-en="Live transcription">实时听译</h3>
+          <p data-en="For videos with no subtitle track of their own, live transcription taps the audio, captions it as it plays and translates that. Recognition runs on your own computer — the audio never leaves it, and it is completely free. <a href=&quot;#live&quot;>How to set it up →</a>">对于没有原声字幕轨的视频，通过实时听译抓取音频、边播边转成字幕再翻译。识别在你自己电脑上跑——音频不出本机，也完全免费。 <a href="#live">怎么装 →</a></p>
+        </div>
+        <div class="feature">
+          <div class="icon">🪶</div>
+          <h3 data-en="Both languages, one look">双语统一显示</h3>
+          <p data-en="The translation blends into YouTube&#39;s own caption, or the extension takes the caption over and shows both languages as one. Either way, tidier.">译文完全融入 YouTube 自带字幕，或接管原字幕统一出现，更整齐。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">⚡</div>
+          <h3 data-en="Zero-lag sync">零延迟同步</h3>
+          <p data-en="Grabs the whole caption track and translates it upfront, so the second language stays perfectly aligned with the video timeline — no more half-second lag.">拿到整条字幕轨后提前翻译，跟视频时间轴精确对齐，不再"中文永远慢半拍"。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🎯</div>
+          <h3 data-en="Full-sentence translation">整句翻译</h3>
+          <p data-en="Merges the fragments that split a sentence in half before translating, so the translator sees the whole clause — noticeably cleaner results than most alternatives.">合并把一句话切成两半的碎片再翻译，让翻译看到完整的句子，译文质量比同类扩展更好。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">⬇️</div>
+          <h3 data-en="Download the subtitles">字幕可下载</h3>
+          <p data-en="Export what you are watching as an .srt file. Choose both languages, the original alone, or the translation alone — or a bilingual transcript to read as notes. The filename carries the video, the channel and the languages, so a folder of them stays easy to sort through.">把正在看的字幕导出成 .srt 格式。可选双语、仅原文、或仅译文，也可以导出成适合做笔记的双语文稿。文件名包含视频名、频道名和语言，方便整理归档。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🔐</div>
+          <h3 data-en="Free forever · optional AI upgrade">完全免费 · 可选 AI 增强</h3>
+          <p data-en="Use native captions or free Google Translate. When you need higher accuracy, optionally enhance translations with Claude, OpenAI, Gemini or DeepSeek — APIs are called only after you confirm.">使用视频自带字幕或 Google 免费翻译。需要更高精度时，可选 Claude / OpenAI / Gemini / DeepSeek 增强翻译，并且只会在你确认后调用 API。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🎨</div>
+          <h3 data-en="Customizable style">样式可调</h3>
+          <p data-en="Size, colour, background transparency, width and position — and <strong>the original and the translation can be set separately</strong>, or locked together with one switch. Rounded plates hug the words, and the two rows sit tight without overlapping.">字号、颜色、背景透明度、宽度、位置随你调，而且<strong>原文和译文可以分开设置</strong>，也能一个开关锁成同一套。圆角底板贴合文字，两行紧挨着又不重叠。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">👁️</div>
+          <h3 data-en="Translation only">只看译文</h3>
+          <p data-en="Prefer to read only the translation? Turn on Translation only and the second language shows on its own, with the player's captions closed — and it can stay on for every video you open.">只想看译文？打开「仅显示翻译字幕」，关着播放器字幕也能单独显示第二语言，而且可以设成每个视频都默认开启。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🖱️</div>
+          <h3 data-en="Drag to reposition">悬停拖动字幕位置</h3>
+          <p data-en="Hover the subtitle and a drag handle appears — press and drag vertically to reposition, fullscreen included. No trip to a settings panel.">鼠标碰到字幕就浮出拖拽把手，按住上下拖，全屏也能调，不用来回开设置面板。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">⌨️</div>
+          <h3 data-en="One key for both languages">一个快捷键开关字幕</h3>
+          <p data-en="<strong>⌘⇧S</strong> on a Mac, <strong>Alt+Shift+S</strong> on Windows and Linux, one key for the second language. Switch between the original alone and both languages whenever you like.">Mac 上 <strong>⌘⇧S</strong>，Windows / Linux 上 <strong>Alt+Shift+S</strong>，一键开关双语字幕。随时切换原文和双语字幕。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🌍</div>
+          <h3 data-en="100+ languages">100+ 种语言</h3>
+          <p data-en="Supports every target language Google Translate offers — Simplified/Traditional Chinese, Japanese, Korean, Spanish, French and more, switchable in one click.">支持 Google Translate 全部目标语言，中文简繁、日文、韩文、西语、法语等都能选，一键切换。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="container">
+      <h2 data-en="Get started in three steps">三步上手</h2>
+      <p class="section-desc" data-en="Now on the Chrome Web Store — one click to install.">已上架 Chrome 应用商店，点一下即可安装。</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <div class="body">
+            <h3 data-en="Add it to Chrome">添加到 Chrome</h3>
+            <p data-en='Open the <a href="https://chromewebstore.google.com/detail/malocefbdblplamcmmmpilepcgllfmnf?utm_source=website&amp;utm_medium=install_steps&amp;utm_campaign=film_launch" target="_blank" rel="noopener">Chrome Web Store page</a> and click <strong>Add to Chrome</strong>, then confirm.'>
+              打开
+              <a href="https://chromewebstore.google.com/detail/malocefbdblplamcmmmpilepcgllfmnf?utm_source=website&amp;utm_medium=install_steps&amp;utm_campaign=film_launch" target="_blank" rel="noopener">Chrome 应用商店页面</a>，
+              点 <strong>添加到 Chrome</strong>，确认安装即可。
+            </p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <div class="body">
+            <h3 data-en="Open a video">打开视频</h3>
+            <p data-en="On YouTube, click the <kbd>CC</kbd> button to turn on native captions (in the language you want to learn) — the extension needs them. On Vimeo, Bilibili and Zoom recordings it reads the subtitle track or transcript directly, so captions are optional there. On other sites such as Coursera, click the HappySubs icon on the page with the video. If a video has no subtitles at all, use <a href=&quot;#live&quot;>live transcription</a>.">
+              YouTube 上点右下角的 <kbd>CC</kbd> 按钮开启原生字幕（你想学的那种语言），扩展要靠它拿字幕。Vimeo、B站 和 Zoom 录像上扩展直接读字幕轨或转录稿，字幕开不开都行。Coursera 等其他网站上，在有视频的页面点一下 HappySubs 图标。完全没有字幕的视频，用<a href="#live">实时听译</a>。
+            </p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <div class="body">
+            <h3 data-en="Pick your second language">选第二语言</h3>
+            <p data-en="Click the extension icon at the top-right of Chrome and pick your second language — the translation overlays on top of the native caption.">
+              点浏览器右上角的扩展图标，选第二语言即可。翻译会自动叠加到原生字幕上方。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <p class="section-desc" style="margin-top:2rem" data-en='Prefer to build it yourself? The full source is on <a href="https://github.com/madebyhappy/happysubs" target="_blank" rel="noopener">GitHub</a> — clone it and load the folder via <code>chrome://extensions</code> → Developer mode → Load unpacked.'>
+        想自己装？完整源码在 <a href="https://github.com/madebyhappy/happysubs" target="_blank" rel="noopener">GitHub</a> 上，clone 下来后在 <code>chrome://extensions</code> 打开开发者模式，点"加载已解压的扩展"选这个文件夹即可。
+      </p>
+    </div>
+  </section>
+
+
+  <section id="live">
+    <div class="container">
+      <h2 data-en="Live transcription">实时听译</h2>
+      <p class="section-desc" data-en="Creates subtitles for videos that have no subtitle track at all. Optional. Understands spoken Chinese, English, Japanese, Korean and Cantonese.">为完全没有字幕轨的视频创造字幕。可选功能，能听懂中文、英语、日语、韩语、粤语。</p>
+
+      <div class="features features-2">
+        <div class="feature">
+          <div class="icon">🔒</div>
+          <h3 data-en="Runs on your machine">在你自己电脑上跑</h3>
+          <p data-en="Recognition happens in a small local service you install and run. The audio never leaves your computer, and there is no per-minute billing.">识别跑在你自己装的一个本地小服务里。音频不出本机，也没有按分钟计费。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🗣️</div>
+          <h3 data-en="Two passes, five languages">两遍识别，五种语言</h3>
+          <p data-en="Chinese and English appear word by word as they are spoken; when a sentence ends, a second model re-recognises it and replaces it with a more accurate, punctuated line. Japanese, Korean and Cantonese appear sentence by sentence.">中文和英语边说边出字；每句说完后，第二个模型把这一句重新识别一遍，换成更准、带标点的版本。日语、韩语、粤语按整句出现。</p>
+        </div>
+        <div class="feature">
+          <div class="icon">💬</div>
+          <h3 data-en="Whole sentences, steady">整句翻译，不再跳</h3>
+          <p data-en="Each sentence is translated once it is finished and then stays put. Free Google Translate by default; in the Live transcribe tab you can pick an AI translator with its own API key, which reads the two sentences before for context — about ¥0.2 an hour with DeepSeek in our test.">每句说完后整句翻译，出现后不再变。默认用免费的 Google 翻译；也可以在「实时听译」标签里单独选 AI 翻译和 API Key，翻译时会参考前两句。我们实测 DeepSeek 一小时约两毛钱。</p>
+        </div>
+      </div>
+
+      <h3 style="margin-top:36px" data-en="How to set it up">怎么装、怎么用</h3>
+      <p data-en="Four steps: install once, then start, turn on and turn off each time. Steps 1 and 2 differ by operating system — pick yours.">一共四步：安装只做一次，之后每次是启动、开启、关闭。第 1、2 步分系统，先选你的系统。</p>
+
+      <div class="os-tabs" role="tablist" aria-label="Operating system">
+        <button type="button" class="os-tab" data-os="unix" role="tab" aria-selected="true">macOS / Linux</button>
+        <button type="button" class="os-tab" data-os="win" role="tab" aria-selected="false">Windows</button>
+      </div>
+
+      <div class="os-panel" data-os="unix" role="tabpanel">
+        <h4 data-en="1. Install (once)">1. 安装（只做一次）</h4>
+        <ol>
+          <li data-en="Open <strong>Terminal</strong>. On a Mac: press <kbd>⌘</kbd>+<kbd>Space</kbd>, type Terminal, press Return.">打开<strong>终端</strong>。Mac 上：按 <kbd>⌘</kbd>+<kbd>空格</kbd>，输入「终端」或 Terminal，回车。</li>
+          <li>
+            <p data-en="Paste this line and press Return:">粘贴下面这一行，回车：</p>
+            <pre class="cmd">curl -fsSL https://raw.githubusercontent.com/madebyhappy/happysubs/main/setup.sh | bash</pre>
+          </li>
+          <li data-en="Wait for it to finish. It creates a <code>happysubs-server</code> folder and downloads the speech models (about 650MB), so it takes a few minutes. When you see <strong>Installation complete</strong>, it is done.">等它跑完。它会建一个 <code>happysubs-server</code> 文件夹，并下载语音识别模型（约 650MB），需要几分钟。看到<strong>「安装完成」</strong>就装好了。</li>
+        </ol>
+        <p class="live-note" data-en="Needs Python 3, which Macs and most Linux systems already have.">需要 Python 3，Mac 和大多数 Linux 自带。</p>
+
+        <h4 data-en="2. Start the recogniser (each time, before watching)">2. 启动识别服务（每次看视频前）</h4>
+        <ol>
+          <li>
+            <p data-en="Open Terminal, paste this line and press Return:">打开终端，粘贴下面这一行，回车：</p>
+            <pre class="cmd">~/happysubs-server/start.sh</pre>
+          </li>
+          <li data-en="When it says <code>listening on ws://127.0.0.1:8765</code>, it is running. Leave this window open while you watch.">看到 <code>监听 · listening on ws://127.0.0.1:8765</code> 就是启动好了。看视频期间，这个窗口一直开着。</li>
+        </ol>
+        <p class="live-note" data-en="If it says the file is not found, you installed somewhere other than your home folder — use the line the installer printed at the end. If it says the port is in use, run <code>lsof -ti:8765 | xargs kill</code> and start again.">提示找不到文件：说明你不是在主目录下安装的，改用安装结束时打印的那一行。提示端口被占用：先执行 <code>lsof -ti:8765 | xargs kill</code>，再启动。</p>
+      </div>
+
+      <div class="os-panel" data-os="win" role="tabpanel" hidden>
+        <h4 data-en="1. Install (once)">1. 安装（只做一次）</h4>
+        <ol>
+          <li>
+            <p data-en='Install Python from <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org</a>, and tick <strong>Add python.exe to PATH</strong> in the installer.'>到 <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org</a> 下载 Windows 安装包，安装时记得勾上 <strong>Add python.exe to PATH</strong>。</p>
+          </li>
+          <li>
+            <p data-en="Open <strong>PowerShell</strong> (Start menu → type PowerShell), paste the whole block below and press Enter. It creates a <code>happysubs-server</code> folder and downloads the speech models (about 420MB), so it takes a few minutes. When the prompt comes back, it is done.">打开 <strong>PowerShell</strong>（开始菜单搜 PowerShell），把下面整段一起粘进去，回车。它会建一个 <code>happysubs-server</code> 文件夹，并下载语音识别模型（约 420MB），需要几分钟。光标重新出现就装好了。</p>
+            <pre class="cmd"># Without this, PowerShell's progress bar makes large downloads roughly ten times slower.
+$ProgressPreference = "SilentlyContinue"
+
+mkdir happysubs-server -Force | Out-Null; cd happysubs-server
+$repo = "https://raw.githubusercontent.com/madebyhappy/happysubs/main/server"
+iwr "$repo/server.py" -OutFile server.py
+iwr "$repo/requirements.txt" -OutFile requirements.txt
+
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# The model, straight from the sherpa-onnx author's own Hugging Face repo.
+mkdir model -Force | Out-Null; cd model
+$hf = "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main"
+foreach ($f in "tokens.txt", "encoder-epoch-99-avg-1.int8.onnx",
+               "decoder-epoch-99-avg-1.int8.onnx", "joiner-epoch-99-avg-1.int8.onnx") {
+  iwr "$hf/$f" -OutFile $f
+}
+cd ..
+
+# The second-pass model: more accurate, punctuated, and Japanese / Korean / Cantonese.
+mkdir model-sensevoice -Force | Out-Null
+$sv = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main"
+iwr "$sv/model.int8.onnx" -OutFile model-sensevoice\model.int8.onnx
+iwr "$sv/tokens.txt" -OutFile model-sensevoice\tokens.txt
+
+# A launcher to double-click from now on, so there is nothing to retype later.
+iwr "$repo/start.bat" -OutFile start.bat</pre>
+          </li>
+        </ol>
+
+        <h4 data-en="2. Start the recogniser (each time, before watching)">2. 启动识别服务（每次看视频前）</h4>
+        <ol>
+          <li data-en="Open the <code>happysubs-server</code> folder and double-click <code>start.bat</code>. A black window opens.">打开 <code>happysubs-server</code> 文件夹，双击 <code>start.bat</code>，会弹出一个黑色窗口。</li>
+          <li data-en="When it says <code>listening on ws://127.0.0.1:8765</code>, it is running. Leave that window open while you watch.">窗口里出现 <code>监听 ws://127.0.0.1:8765</code> 就是启动好了。看视频期间，这个窗口一直开着。</li>
+        </ol>
+
+        <p class="live-note" data-en="Windows notes: if <code>py -3</code> is not recognised, use <code>python</code> instead — the Microsoft Store build of Python does not install the py launcher. Port already in use: <code>netstat -ano | findstr :8765</code> to find the PID, then <code>taskkill /PID &lt;pid&gt; /F</code>. If huggingface.co is unreachable from your network, swap it for <code>hf-mirror.com</code> in the block above — the paths are identical.">Windows 上几点：<code>py -3</code> 提示找不到的话改用 <code>python</code>——从微软商店装的 Python 不带 py 启动器。端口被占用时用 <code>netstat -ano | findstr :8765</code> 查到 PID，再 <code>taskkill /PID &lt;PID&gt; /F</code>。如果访问 huggingface.co 不通，把上面那段里的 <code>huggingface.co</code> 换成 <code>hf-mirror.com</code> 即可，路径完全一样。</p>
+      </div>
+
+      <h4 style="margin-top:28px" data-en="3. Turn on live transcription">3. 开启听译</h4>
+      <ol>
+        <li data-en="Open the video and press play.">打开视频，点播放。</li>
+        <li data-en="Click the HappySubs icon, switch to the <strong>Live transcribe</strong> tab, and press <strong>Start live transcription</strong>. Subtitles appear a few seconds later.">点 HappySubs 图标，切到<strong>「实时听译」</strong>标签，点<strong>「开启实时听译」</strong>。几秒后字幕出现。</li>
+      </ol>
+
+      <h4 style="margin-top:28px" data-en="4. Turn it off">4. 关闭听译</h4>
+      <ol type="a">
+        <li data-en="<strong>Stop the subtitles:</strong> press <strong>Stop live transcription</strong> in the same tab of the popup."><strong>关闭字幕：</strong>在插件弹窗的同一个标签里点「关闭实时听译」。</li>
+        <li data-en="<strong>Stop the recogniser:</strong> press <kbd>Ctrl</kbd>+<kbd>C</kbd> in its terminal window, or close that window (on Windows, the black window). Nothing keeps running in the background."><strong>关闭识别服务：</strong>在它的终端窗口里按 <kbd>Ctrl</kbd>+<kbd>C</kbd>，或者直接关掉那个窗口（Windows 上关掉那个黑色窗口）。关掉之后不会有任何东西留在后台运行。</li>
+      </ol>
+
+      <p class="live-note" data-en="The recogniser handles one page at a time: use it in one tab only. On a new computer, do step 1 again. <strong>Installed before 2.2.0?</strong> Do step 1 once more to get the second pass and the new languages — everything keeps working if you don't.">
+        识别服务一次只能服务一个页面，只在一个标签页里用。换电脑后重做一次第 1 步即可。<strong>2.2.0 之前装过的</strong>：再做一次第 1 步，就有二次识别和新增的语言；不做也照常能用。
+      </p>
+    </div>
+  </section>
+
+  <section id="changelog">
+    <div class="container">
+      <h2 data-en="Changelog">更新日志</h2>
+
+      <details open>
+        <summary data-en="2.2.0 — Zoom recordings, embedded YouTube, more sites, better live transcription, more languages">2.2.0 — Zoom 录像、嵌入的 YouTube、更多网站、实时听译升级、更多语言</summary>
+        <p data-en="<strong>Zoom recordings</strong>: bilingual subtitles, a translated transcript panel, and a bilingual transcript export."><strong>Zoom 录像</strong>：双语字幕、转录稿栏译文、导出双语文稿。</p>
+        <p data-en="<strong>YouTube embedded in other sites</strong> now gets bilingual subtitles."><strong>嵌在其他网站里的 YouTube</strong> 也有双语字幕了。</p>
+        <p data-en="<strong>More sites</strong> such as Coursera."><strong>更多网站</strong>：支持 Coursera 等。</p>
+        <p data-en="<strong>Live transcription</strong>: more accurate, with punctuation; understands Japanese, Korean and Cantonese too; works on local video files. The translation appears a whole sentence at a time and stays put, and can use your own AI translator and key. Already installed the recogniser? Run the install command once more."><strong>实时听译</strong>：识别更准、带标点；新增日语、韩语、粤语；本地视频也能用。译文整句出现、不再跳动，还可以单独选用 AI 翻译和 API Key。已经装过识别服务的，重新运行一次安装命令即可。</p>
+        <p data-en="<strong>Interface languages</strong>: Traditional Chinese, Japanese and Vietnamese added."><strong>界面语言</strong>：新增繁体中文、日文、越南文。</p>
+        <p data-en="When YouTube auto-translates captions, HappySubs switches back to the original.">YouTube 自动翻译字幕时，HappySubs 会换回原文。</p>
+      </details>
+
+      <details>
+        <summary data-en="2.1.2 — steadier subtitles">2.1.2 — 字幕更稳了</summary>
+        <p data-en="Subtitles no longer flicker when the line changes or sit on the player&#39;s controls when you pause, and new installs open a short page on getting started.">换句时字幕不再闪一下，暂停时也不再压住控制栏；新装的用户会先看到一页上手说明。</p>
+      </details>
+
+      <details>
+        <summary data-en="2.1.1 — fixes for AI translation">2.1.1 — AI 翻译的几个修复</summary>
+        <p data-en="Fixed paid AI translation never offering itself and its button refusing to start after switching translator, and provider errors now read as one plain sentence.">修好了付费 AI 翻译不弹确认、换翻译源后按钮失灵的问题，翻译源的报错也改成了一句看得懂的话。</p>
+      </details>
+
+      <details>
+        <summary data-en="2.1.0 — two languages in one subtitle (inside the player&#39;s caption, or drawn entirely by HappySubs), subtitle export, a quick toggle, redesigned pages">2.1.0 — 双语合成一条字幕（嵌入原生字幕/完全代理）、可导出字幕、快捷开关、页面重新设置</summary>
+        <p data-en="Both languages now appear and change together as one subtitle, and auto-captions no longer scroll in word by word. The original and the translation can be styled separately, subtitles export as .srt, ⌘⇧S (Alt+Shift+S on Windows and Linux) toggles the second language, and the interface and settings were redesigned. AI translation lets you pick or type in a model, shows its progress on the video and offers three ways to use a paid API, alongside fixes such as videos with a pre-roll ad losing their subtitles.">双语合成一条字幕，两行一起出现、一起换，自动生成字幕也不再逐字滚动。原文和译文样式可以分开调，新增 .srt 导出和 ⌘⇧S（Windows / Linux 上 Alt+Shift+S）快捷开关，界面和设置也重新设计了。AI 翻译可以选模型或自己填，翻译进度显示在视频上方，付费 API 的调用方式可以三选一，并修复了开头有贴片广告时没有字幕等问题。</p>
+      </details>
+
+      <details>
+        <summary data-en="2.0.1 — translation no longer gives up halfway">2.0.1 — 长视频后半段不再只剩原文</summary>
+        <p data-en="On a long video the free translator would quietly hit its rate limit partway through, and the rest of the subtitles came back as the original language with no explanation. Translation now goes through a steadier route, slows itself down instead of being cut off, and says so on the subtitle line if a translation really fails.">看长视频时，免费翻译经常在中途被悄悄限流，后半段字幕就只剩原文，而且什么提示也没有。现在翻译走更稳的通道、被限流时自己放慢而不是直接断掉；真的翻不出来，也会在字幕上直接说一声。</p>
+      </details>
+
+      <details>
+        <summary data-en="2.0.0 — Bilibili, live transcription, Vimeo">2.0.0 — B 站、实时听译、Vimeo</summary>
+        <p data-en="<strong>Bilibili.</strong> Subtitle tracks are pulled straight from Bilibili's own API, so the whole translation stack applies to them: four AI translators alongside free Google, human tracks preferred over AI-generated ones, and translation-only mode. Playlists, bangumi and festival pages are covered too."><strong>B 站。</strong>字幕轨直接从 B 站自家 API 拉取，所以整套翻译能力都能用上：Google 免费翻译之外还有四个 AI 翻译源、人工字幕优先于 AI 字幕、仅翻译模式。播放列表、番剧、festival 页面也都支持。</p>
+        <p data-en="<strong>Live transcription.</strong> For videos with no subtitle track at all. Taps the audio, captions it as it plays and translates that, with recognition running on your own machine. <a href=&quot;#live&quot;>Setup guide →</a>"><strong>实时听译。</strong>给完全没有字幕轨的视频用。抓取音频、边播边转成字幕再翻译，识别跑在你自己电脑上。<a href="#live">安装说明 →</a></p>
+        <p data-en="<strong>Vimeo.</strong> Watch pages, the player on player.vimeo.com, and Vimeo players embedded in other sites. Vimeo hands over its subtitle track directly, so captions do not have to be turned on first."><strong>Vimeo。</strong>观看页、player.vimeo.com 播放器、以及嵌在第三方网站里的 Vimeo 播放器。Vimeo 会直接把字幕轨给我们，所以不用先开字幕。</p>
+        <p data-en="<strong>Translation-only mode.</strong> By default the second language follows the player: no captions, no overlay. Turn this on and it shows on its own, with the player's captions closed."><strong>仅显示翻译字幕。</strong>默认第二字幕跟随播放器：不开原生字幕就不显示。打开这个开关后，关着播放器字幕也能单独显示译文。</p>
+        <p data-en="<strong>Settings page.</strong> Pin the panel language to Chinese or English instead of following the browser, and set the defaults every video starts with."><strong>设置页。</strong>可以把面板语言固定成中文或英文，不再只能跟随浏览器；也能设置每个视频打开时的默认状态。</p>
+        <p data-en="<strong>Subtitle layout.</strong> The translated line now wraps at about the same width as the original instead of folding onto an extra line, and there is a subtitle-width setting for when there is no original to match."><strong>字幕排版。</strong>译文的行宽会向原文对齐，不再出现原文一行、译文折成两三行；没有原文可对齐时另有「字幕宽度」可调。</p>
+      </details>
+
+      <details>
+        <summary data-en="1.3.0 — auto-localized interface">1.3.0 — 界面自动本地化</summary>
+        <p data-en="The popup, on-page prompts and store description follow your browser's language automatically — Chinese for zh-* browsers, English for everyone else.">插件弹窗、页面内提示和商店描述会自动跟随浏览器语言：中文浏览器显示中文，其他显示英文。</p>
+      </details>
+
+      <details>
+        <summary data-en="1.2.0 — optional AI translation">1.2.0 — 可选 AI 翻译</summary>
+        <p data-en="Claude / OpenAI / Gemini / DeepSeek alongside native captions and free Google Translate, with manual confirmation before any paid API call.">在视频自带字幕和 Google 免费翻译之外，加入 Claude / OpenAI / Gemini / DeepSeek，付费 API 需手动确认后才会调用。</p>
+      </details>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="container">
+      <h2 data-en="FAQ">常见问题</h2>
+      <p class="section-desc"></p>
+
+      <details>
+        <summary data-en="Why do I have to turn on CC on YouTube but not on Vimeo?">为什么 YouTube 必须开 CC，Vimeo 却不用？</summary>
+        <p data-en="On YouTube the extension works by intercepting the player's own caption request, and YouTube only fires that request when CC is on. Vimeo publishes its subtitle tracks as ordinary files the extension can read on its own, so nothing needs turning on first. If you only want the translation, turn on <strong>Translation only</strong> in the popup — the second language then shows on its own with the player's captions closed.">YouTube 上扩展是靠拦截播放器自己去拿字幕的请求，而 YouTube 只在你开 CC 的时候才发这个请求。Vimeo 则是把字幕轨当普通文件放出来，扩展可以自己去读，所以不需要先开任何东西。如果你只想看译文，在插件弹窗里打开 <strong>仅显示翻译字幕</strong>，关着 CC 也会单独显示第二语言。</p>
+      </details>
+      <details>
+        <summary data-en="Do I have to install anything for Bilibili?">B 站需要装什么吗？</summary>
+        <p data-en="No. Bilibili subtitle tracks are read straight from the site, the same as everywhere else. The local service is only for live transcription, and only for videos that have no subtitle track at all.">不需要。B 站的字幕轨跟其他平台一样直接读取。本地服务只跟实时听译有关，而实时听译只用于完全没有字幕轨的视频。</p>
+      </details>
+      <details>
+        <summary data-en="Bilibili says this video has no subtitles — is that right?">B 站上提示这个视频没有字幕，是真的吗？</summary>
+        <p data-en="Probably. Bilibili only lists subtitle tracks to signed-in viewers, so signing in is worth checking first. If you are signed in and the extension still finds nothing, the video genuinely has none — that is what live transcription is for.">多半是。B 站只对**登录用户**返回字幕列表，所以先确认你登录了。如果已经登录、扩展仍然找不到，那就是真的没有——这正是实时听译存在的理由。</p>
+      </details>
+      <details>
+        <summary data-en="What if the video has no captions?">如果视频没有字幕怎么办？</summary>
+        <p data-en="On YouTube and Vimeo most videos have auto-generated captions. On Bilibili most have none, which is what <a href=&quot;#live&quot;>live transcription</a> is for — it listens to the audio and writes the subtitles itself.">YouTube 和 Vimeo 上大部分视频有自动生成字幕。B 站上大部分**没有**，这正是<a href="#live">实时听译</a>的用武之地——它直接听音频，自己把字幕写出来。</p>
+      </details>
+      <details>
+        <summary data-en="How accurate is the translation?">翻译准确吗？</summary>
+        <p data-en="By default it uses native captions or free Google Translate. If you need higher quality, you can manually enable Claude, OpenAI, Gemini or DeepSeek for the current video.">默认优先使用视频自带字幕或 Google 免费翻译。如果你需要更高质量，可以手动为当前视频启用 Claude / OpenAI / Gemini / DeepSeek。</p>
+      </details>
+      <details>
+        <summary data-en="Does it upload my data?">会上传我的数据吗？</summary>
+        <p data-en="The source is open for audit. The extension reads the current video's captions and sends caption text only to the translation provider you choose. Paid APIs are called only after explicit confirmation.">扩展代码完全开源可审。它只读取当前视频字幕，并只把字幕文本发送到你选择的翻译源。付费 API 只有在明确确认后才会调用。</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="closing" id="get">
+    <div class="container">
+      <span class="bars" aria-hidden="true"><i></i><i></i></span>
+      <h2 data-en="Watch anything.<br>Understand everything.">看懂每一个视频。</h2>
+      <p data-en="Free on the Chrome Web Store · YouTube, Vimeo, Bilibili and Zoom">Chrome 应用商店免费安装 · 支持 YouTube、Vimeo、Bilibili、Zoom</p>
+      <a class="cta cta-lg" href="https://chromewebstore.google.com/detail/malocefbdblplamcmmmpilepcgllfmnf?utm_source=website&amp;utm_medium=closing&amp;utm_campaign=film_launch" target="_blank" rel="noopener" data-en="Add to Chrome — it’s free">添加到 Chrome · 免费</a>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>Made by <a class="more" href="https://madebyhappy.github.io/" target="_blank" rel="noopener">Happy</a></p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const STORAGE_KEY = "yds-site-lang";
+      const TITLES = {
+        zh: "HappySubs — 双语字幕与实时听译 For YouTube / Vimeo / Zoom / Bilibili",
+        en: "HappySubs — Dual Subtitles & Live Captions for YouTube, Vimeo, Zoom & Bilibili"
+      };
+      const DESCRIPTIONS = {
+        zh: "在 YouTube、Vimeo、B站 和 Zoom 录像上同时显示两种语言的字幕；没有字幕的视频还能实时听译。",
+        en: "Two subtitle languages at once on YouTube, Vimeo, Bilibili and Zoom recordings — plus live transcription for videos with no captions at all."
+      };
+      const TOGGLE_LABEL = { zh: "EN", en: "中" };
+
+      const nodes = Array.from(document.querySelectorAll("[data-en]"));
+      // Snapshot original Chinese content so we can restore it after switching to EN.
+      nodes.forEach(n => { n.dataset.zh = n.innerHTML; });
+      // Controls with no visible text carry their name in aria-label instead.
+      const ariaNodes = Array.from(document.querySelectorAll("[data-en-aria]"));
+      ariaNodes.forEach(n => { n.dataset.zhAria = n.getAttribute("aria-label") || ""; });
+
+      const descMeta = document.querySelector('meta[name="description"]');
+      const toggleBtn = document.getElementById("langToggle");
+
+      function apply(lang) {
+        const key = lang === "en" ? "en" : "zh";
+        nodes.forEach(n => {
+          const html = key === "en" ? n.dataset.en : n.dataset.zh;
+          if (html != null) n.innerHTML = html;
+        });
+        ariaNodes.forEach(n => {
+          n.setAttribute("aria-label", key === "en" ? n.dataset.enAria : n.dataset.zhAria);
+        });
+        document.documentElement.lang = key === "en" ? "en" : "zh-Hans";
+        document.title = TITLES[key];
+        if (descMeta) descMeta.setAttribute("content", DESCRIPTIONS[key]);
+        toggleBtn.textContent = TOGGLE_LABEL[key];
+        toggleBtn.setAttribute("aria-label", key === "en" ? "切换到中文" : "Switch to English");
+      }
+
+      let saved = null;
+      try { saved = localStorage.getItem(STORAGE_KEY); } catch {}
+      apply(saved === "en" ? "en" : "zh");
+
+      toggleBtn.addEventListener("click", () => {
+        const next = document.documentElement.lang.startsWith("zh") ? "en" : "zh";
+        try { localStorage.setItem(STORAGE_KEY, next); } catch {}
+        apply(next);
+        // The page opens in Chinese, so this counts the visitors who needed English.
+        gtag("event", next === "en" ? "switch_to_english" : "switch_to_chinese");
+      });
+    })();
+
+    // macOS / Windows switch for the setup commands. Delegated from the document
+    // so it keeps working after the language toggle rewrites the panels' innerHTML.
+    (function () {
+      function show(os) {
+        document.querySelectorAll(".os-tab").forEach(b => {
+          b.setAttribute("aria-selected", String(b.dataset.os === os));
+        });
+        document.querySelectorAll(".os-panel").forEach(p => {
+          p.hidden = p.dataset.os !== os;
+        });
+      }
+
+      document.addEventListener("click", (e) => {
+        const tab = e.target.closest(".os-tab");
+        if (tab) show(tab.dataset.os);
+      });
+
+      // Windows visitors should not have to notice the switch to find their own
+      // instructions; everyone else keeps the shell script they came for.
+      if (/win/i.test(navigator.platform || "") || /Windows NT/.test(navigator.userAgent)) {
+        show("win");
+      }
+    })();
+
+    // The film: part of the page rather than a player (see the CSS above).
+    //   auto   — plays muted while mostly on screen, once, and stops on its end
+    //            card; the button toggles sound, then gives way to replay
+    //   static — waits on the poster for visitors who asked for less motion or
+    //            data, or whose browser refused to start it; the button plays it
+    (function () {
+      const film = document.getElementById("film");
+      if (!film) return;
+      const video = film.querySelector("video");
+      const btn = film.querySelector(".film-sound");
+      const replay = film.querySelector(".film-replay");
+      const hotspot = film.querySelector(".film-hotspot");
+
+      // Measured off the film: the end card's button has settled by 27.7s and
+      // the picture starts fading to black at 29.5s, so it holds at 29.4s. The
+      // first 0.12s is the fade in from black, which the poster stands in for.
+      const HOT_FROM = 27.7, END_HOLD = 29.4, FIRST_FRAME = 0.12;
+
+      video.removeAttribute("controls");
+      video.loop = false;
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const conn = navigator.connection;
+      const lean = conn && (conn.saveData || /(^|-)2g$/.test(conn.effectiveType || ""));
+      if (reduce || lean) toStatic();
+      else video.preload = "auto";
+
+      function toStatic() {
+        film.dataset.mode = "static";
+        // Waiting, it should show what the film is about, not its first frame.
+        video.poster = "media/happysubs-film-still.jpg";
+        sync();
+      }
+      const ended = () => film.classList.contains("is-ended");
+      let begun = false;
+      function play() {
+        if (ended()) return;
+        if (!begun) { begun = true; video.currentTime = FIRST_FRAME; }
+        const p = video.play();
+        // Pausing it off screen interrupts a pending play() too; only an
+        // outright refusal means the browser will not start it by itself.
+        if (p) p.catch(err => { if (err && err.name === "NotAllowedError") toStatic(); });
+      }
+      function end() {
+        video.pause();
+        if (video.currentTime > END_HOLD + 0.05) video.currentTime = END_HOLD;
+        film.classList.add("is-ended");
+        hotspot.classList.add("on");
+        once("film_complete");
+      }
+      // Analytics. The film starts by itself, so "it played" says nothing about
+      // the visitor; reaching the middle, the end card, or sound on does.
+      // Each is counted once per page view.
+      const sent = new Set();
+      function once(name) {
+        if (sent.has(name)) return;
+        sent.add(name);
+        gtag("event", name);
+      }
+      function sync() {
+        btn.dataset.sound = film.dataset.mode === "auto" && !video.muted ? "on" : "off";
+      }
+
+      // Stop on the end card to the frame, not on the fade to black after it.
+      // requestVideoFrameCallback runs once per decoded frame; rAF is the
+      // fallback. timeupdate and ended catch a tab that was in the background.
+      const nextFrame = video.requestVideoFrameCallback
+        ? cb => video.requestVideoFrameCallback(cb)
+        : cb => requestAnimationFrame(cb);
+      function watch() {
+        if (video.paused) return;
+        if (video.currentTime >= END_HOLD) end();
+        else nextFrame(watch);
+      }
+      video.addEventListener("play", () => nextFrame(watch));
+      video.addEventListener("timeupdate", () => {
+        const t = video.currentTime;
+        if (t >= END_HOLD / 2) once("film_half");
+        if (!video.paused && t >= END_HOLD) end();
+        hotspot.classList.toggle("on", ended() || t >= HOT_FROM);
+      });
+      video.addEventListener("ended", end);
+
+      new IntersectionObserver(([e]) => {
+        if (film.dataset.mode !== "auto" || ended()) return;
+        if (e.isIntersecting) play();
+        else if (!video.paused) video.pause();
+      }, { threshold: 0.45 }).observe(film.querySelector(".film-frame"));
+
+      btn.addEventListener("click", () => {
+        if (film.dataset.mode === "static") {
+          film.dataset.mode = "auto";
+          video.muted = false;
+        } else {
+          video.muted = !video.muted;
+        }
+        if (video.paused) play();
+        sync();
+        if (!video.muted) once("film_sound_on");
+      });
+      replay.addEventListener("click", () => {
+        gtag("event", "film_replay");
+        const hadFocus = document.activeElement === replay;
+        film.classList.remove("is-ended");
+        hotspot.classList.remove("on");
+        video.currentTime = 0;
+        play();
+        // Replay hides itself; keyboard focus moves to the button that replaces it.
+        if (hadFocus) btn.focus({ preventScroll: true });
+      });
+      video.addEventListener("volumechange", sync);
+      sync();
+    })();
+
+    // The nav's install button appears once the hero's has scrolled away.
+    (function () {
+      const hero = document.getElementById("heroCta"), nav = document.getElementById("navCta");
+      const links = document.getElementById("navLinks");
+      if (!hero || !nav || !("IntersectionObserver" in window)) return;
+      new IntersectionObserver(([e]) => {
+        const past = !e.isIntersecting && e.boundingClientRect.top < 0;
+        nav.classList.toggle("show", past);
+        if (links) links.classList.toggle("show", past);
+      }).observe(hero);
+      // The link for the section being read is lit.
+      if (!links) return;
+      const byId = new Map([...links.querySelectorAll("a")].map(a => [a.getAttribute("href").slice(1), a]));
+      const spy = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          for (const a of byId.values()) a.classList.remove("here");
+          const a = byId.get(e.target.id);
+          if (a) a.classList.add("here");
+        }
+      }, { rootMargin: "-45% 0px -50% 0px" });
+      for (const id of byId.keys()) { const sec = document.getElementById(id); if (sec) spy.observe(sec); }
+    })();
+
+    // Which "Add to Chrome" link was used. Each one already names its place on
+    // the page in utm_medium (nav, hero, film_endcard, install_steps, closing),
+    // the same value the store's own analytics reports, so the two line up.
+    // Delegated, because the language toggle rewrites the install steps' links.
+    document.addEventListener("click", (e) => {
+      const link = e.target.closest('a[href*="chromewebstore.google.com"]');
+      if (!link) return;
+      const position = new URL(link.href).searchParams.get("utm_medium") || "other";
+      gtag("event", "cta_click", { position });
+    });
+  </script>
+
+</body>
+</html>

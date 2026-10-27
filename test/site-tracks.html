@@ -1,0 +1,287 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>YDS site-tracks harness</title>
+<link rel="stylesheet" href="../overlay.css">
+<style>
+  body { font: 14px/1.5 -apple-system, sans-serif; margin: 16px; }
+  #fake-player { position: relative; width: 640px; height: 360px; background: #222; }
+  .site-caption { position: absolute; bottom: 30px; width: 100%; text-align: center; color: #fff; }
+  pre { background: #f4f4f4; padding: 10px; white-space: pre-wrap; }
+  a { margin-right: 10px; }
+</style>
+
+<h1>Bilibili-style sites: pairing the site's own tracks</h1>
+<p>
+  <a href="?case=A">A</a><a href="?case=B">B</a><a href="?case=C">C</a><a href="?case=D">D</a><a href="?case=I">I</a><a href="?case=J">J</a><a href="?case=K">K</a><a href="?case=L">L</a><a href="?case=M">M</a><a href="?case=N">N</a><a href="?case=O">O</a><a href="?case=P">P</a><a href="?case=Q">Q</a><a href="?case=R">R</a><a href="?case=S">S</a><a href="?case=T">T</a><a href="?case=U">U</a><a href="?case=V">V</a><a href="?case=W">W</a><a href="?case=E">E</a><a href="?case=F">F</a><a href="?case=G">G</a><a href="?case=H">H</a>
+</p>
+<pre id="out">running…</pre>
+<div id="fake-player"><video id="v"></video><div class="site-caption">站点自己的字幕</div></div>
+
+<script>
+// A site that hands over every track by URL (Bilibili) follows one rule,
+// whatever its caption switch says:
+//   original + target → both lines from the site's tracks, its caption hidden
+//   only the original → translate it ourselves
+//   only the target   → leave the site's caption alone, say so for 3 s
+// With a paid API set up, the viewer is asked whether to replace the site's
+// own translation.
+const CASES = {
+  A: { why: "English + Chinese tracks, free Google",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       want: { asked: "en,zh", siteHidden: true, overlayHas: ["Hello there", "你好"], hint: false, prompt: false } },
+  B: { why: "only Chinese (the site's own translation)",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }],
+       want: { asked: "", siteHidden: false, overlayHas: [], hint: true, prompt: false } },
+  C: { why: "only English",
+       tracks: [{ languageCode: "en", kind: "", name: "English" }],
+       // Offline here, so the translation never arrives; what matters is that
+       // the English track is the one fetched and the site caption gives way.
+       want: { asked: "en", siteHidden: true, overlayHas: [], hint: false, prompt: false } },
+  D: { why: "English + Chinese, Claude key set → no question: the video's own human Chinese is used",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       provider: "claude",
+       want: { asked: "en,zh", siteHidden: true, overlayHas: ["Hello there", "你好"], hint: false, prompt: false } },
+  I: { why: "as D, then the popup's translate button: the site's line stays up until the API's arrives — no flicker",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       provider: "claude", clickUse: true,
+       // Offline, so the API fails and the "fell back" toast is expected.
+       want: { asked: "en,zh", siteHidden: true, overlayHas: ["Hello there", "你好"], hint: true, prompt: false, steady: true } },
+  J: { why: "a Claude translation saved last time → shown at once, no question, no API call",
+       tracks: [{ languageCode: "en", kind: "", name: "English" }],
+       provider: "claude",
+       saved: { "ydsSaved|mock|mock-1|zh-Hans|en": { provider: "claude", model: "x", sourceCount: 1, at: Date.now() - 3600e3,
+                                                     cues: [[0, 600, "你好呀（之前的翻译）"]] } },
+       want: { asked: "en", siteHidden: true, overlayHas: ["Hello there", "你好呀（之前的翻译）"], hint: true,
+               hintHas: "已载入之前的翻译", prompt: false } },
+  K: { why: "English + Chinese with the player's caption switched off (Bilibili's default) and translation-only off → still shown",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       ccOff: true,
+       want: { asked: "en,zh", siteHidden: true, overlayHas: ["Hello there", "你好"], hint: false, prompt: false } },
+  L: { why: "English only, Claude set to always: the finished translation is saved for next time",
+       tracks: [{ languageCode: "en", kind: "", name: "English" }],
+       provider: "claude", paidApiMode: "always", mockClaude: true,
+       want: { asked: "en", siteHidden: true, overlayHas: ["Hello there", "你好（Claude）"], hint: true, prompt: false,
+               savedKey: "ydsSaved|mock|mock-1|zh-Hans|en" } },
+  M: { why: "as J, then the viewer switches to DeepSeek: the saved Claude translation stays, nothing is asked or sent",
+       tracks: [{ languageCode: "en", kind: "", name: "English" }],
+       provider: "claude", switchTo: "deepseek",
+       saved: { "ydsSaved|mock|mock-1|zh-Hans|en": { provider: "claude", model: "x", sourceCount: 1, at: Date.now() - 3600e3,
+                                                     cues: [[0, 600, "你好呀（之前的翻译）"]] } },
+       want: { asked: "en", siteHidden: true, overlayHas: ["Hello there", "你好呀（之前的翻译）"], hint: true, prompt: false } },
+  N: { why: "a saved translation 8 days old, kept for 7 → ignored and removed; the usual question instead",
+       tracks: [{ languageCode: "en", kind: "", name: "English" }],
+       provider: "claude",
+       saved: { "ydsSaved|mock|mock-1|zh-Hans|en": { provider: "claude", model: "x", sourceCount: 1, at: Date.now() - 8 * 86400e3,
+                                                     cues: [[0, 600, "过期的翻译"]] } },
+       want: { asked: "en", siteHidden: true, overlayHas: [], hint: null, prompt: true, savedGone: true } },
+  O: { why: "English + Chinese with Translation only ticked → the Chinese alone",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       translationOnly: true,
+       want: { asked: "en,zh", siteHidden: true, overlayHas: ["你好"], overlayLacks: "Hello there", hint: false, prompt: false } },
+  P: { why: "English + Chinese, target English, a saved Claude zh→en exists → the video's own English wins",
+       target: "en",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       provider: "claude",
+       saved: { "ydsSaved|mock|mock-1|en|zh": { provider: "claude", model: "x", sourceCount: 1, at: Date.now() - 3600e3,
+                                                cues: [[0, 600, "Hi there (back-translated)"]] } },
+       want: { asked: "en,zh", siteHidden: true, overlayHas: ["你好", "Hello there"], overlayLacks: "back-translated",
+               hint: false, prompt: false } },
+  Q: { why: "English talk with only Bilibili's AI-translated Chinese, target English → nothing translated, the panel offers it",
+       target: "en", tracks: [{ languageCode: "zh", kind: "asr", name: "中文", aiTranslated: true }],
+       want: { asked: "", siteHidden: false, overlayHas: [], hint: true, hintHas: "可在面板里开启", prompt: false, optIn: true } },
+  W: { why: "as Q, then the viewer picks the AI Chinese in the panel → it is fetched and translated",
+       target: "en", switchSource: "zh", switchKind: "asr",
+       tracks: [{ languageCode: "zh", kind: "asr", name: "中文", aiTranslated: true }],
+       want: { asked: "zh", siteHidden: true, overlayHas: [], hint: null, prompt: false, sourceNow: "zh" } },
+  R: { why: "the same video with target Chinese → the AI Chinese is the player's to show, as in G",
+       tracks: [{ languageCode: "zh", kind: "asr", name: "中文", aiTranslated: true }],
+       want: { asked: "", siteHidden: false, overlayHas: [], hint: true, hintHas: "中文 (AI)", prompt: false } },
+  S: { why: "a human Traditional track + AI-translated Chinese, target English → the human track is the source",
+       target: "en", tracks: [{ languageCode: "zh-Hant", kind: "", name: "繁體" }, { languageCode: "zh", kind: "asr", name: "中文", aiTranslated: true }],
+       want: { asked: "zh-Hant", siteHidden: true, overlayHas: [], hint: false, prompt: false } },
+  T: { why: "Josh Johnson: human Chinese (listed first) + human English, target Japanese → translate from English",
+       target: "ja",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       want: { asked: "en", siteHidden: true, overlayHas: [], hint: false, prompt: false } },
+  U: { why: "as T, then the viewer picks Chinese in the panel → Chinese fetched and used",
+       target: "ja", switchSource: "zh",
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       want: { asked: "en,zh", siteHidden: true, overlayHas: [], hint: false, prompt: false, sourceNow: "zh" } },
+  V: { why: "Chinese talk: Bilibili's recognition (ai-zh, ai_type 0) + a human English track, target Japanese → the human English, as everywhere (human text beats a machine transcript); the panel can switch",
+       target: "ja",
+       tracks: [{ languageCode: "zh", kind: "asr", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       want: { asked: "en", siteHidden: true, overlayHas: [], hint: false, prompt: false } },
+  X: { why: "YouTube (?yt=1): the first request for the video's own Chinese is swallowed (an ad) while English arrives → asked again, Chinese used",
+       keepTracks: true, dropFirst: "zh", wait: 10500,
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       want: { asked: "zh,zh", siteHidden: null, overlayHas: ["你好"], hint: null, prompt: false } },
+  Y: { why: "YouTube (?yt=1): the Chinese request is swallowed by an ad, and the English only arrives when the ad ends → Chinese asked for again at once, not 8 s later",
+       keepTracks: true, dropFirst: "zh", enDelay: 1000, wait: 2600,
+       tracks: [{ languageCode: "zh", kind: "", name: "中文" }, { languageCode: "en", kind: "", name: "English" }],
+       want: { asked: "zh,zh", siteHidden: null, overlayHas: ["你好"], hint: null, prompt: false } },
+  E: { why: "target Korean, Japanese video → translate the Japanese",
+       target: "ko", tracks: [{ languageCode: "ja", kind: "", name: "日本語" }],
+       want: { asked: "ja", siteHidden: true, overlayHas: [], hint: false, prompt: false } },
+  F: { why: "target Korean, Korean-only video → leave it alone",
+       target: "ko", tracks: [{ languageCode: "ko", kind: "", name: "한국어" }],
+       want: { asked: "", siteHidden: false, overlayHas: [], hint: true, prompt: false } },
+  G: { why: "only Bilibili's AI Chinese, target Chinese → point at the player's own subtitles",
+       tracks: [{ languageCode: "zh", kind: "asr", name: "中文" }],
+       want: { asked: "", siteHidden: false, overlayHas: [], hint: true, hintHas: "中文 (AI)", prompt: false } },
+  H: { why: "only Bilibili's AI Chinese, target English → translate it",
+       target: "en", tracks: [{ languageCode: "zh", kind: "asr", name: "中文" }],
+       want: { asked: "zh", siteHidden: true, overlayHas: [], hint: false, prompt: false } }
+};
+const CASE = new URLSearchParams(location.search).get("case") || "A";
+const SPEC = CASES[CASE];
+const YT = new URLSearchParams(location.search).get("yt") === "1";
+// On YouTube there is no site translation to pair with: only the English track.
+if (YT && !SPEC.keepTracks) {
+  SPEC.tracks = SPEC.tracks.filter(t => t.languageCode !== "zh");
+  // The player fetches the caption track itself (we intercept it), so nothing
+  // is requested; whether its caption is hidden depends on takeover, not
+  // checked here; and offline, a fresh translation never arrives.
+  SPEC.want = { ...SPEC.want, asked: "", siteHidden: null,
+                overlayHas: SPEC.want.overlayHas.filter(t => t !== "你好") };
+  // Waiting on the question with nothing translated yet: no line on screen
+  // (no site translation to stand in), and a note saying what to press.
+  if (SPEC.want.prompt) SPEC.want = { ...SPEC.want, overlayHas: [], hint: null };
+}
+
+const STORE = { ydsSettings: { enabled: true, secondLang: SPEC.target || "zh-Hans", uiLang: "zh",
+                               bottomOffset: 20, fontSize: 22, color: "#ffffff",
+                               background: "rgba(0,0,0,0.6)", translationProvider: SPEC.provider || "google",
+                               translationOnly: !!SPEC.translationOnly, apiKeys: SPEC.provider ? { [SPEC.provider]: "test-key" } : {},
+                               paidApiMode: SPEC.paidApiMode || "ask", ydsRatePromptState: "done" } };
+window.chrome = {
+  runtime: { id: "yds-test", getURL: (f) => "/" + f, onMessage: { addListener(fn) { (window.__onMessage ||= []).push(fn); } }, lastError: null,
+             sendMessage: () => Promise.resolve({ ok: false }) },
+  i18n: { getUILanguage: () => "zh-CN" },
+  storage: { sync: { get: (k, cb) => setTimeout(() => cb(JSON.parse(JSON.stringify(STORE))), 0),
+                     set: (o, cb) => { Object.assign(STORE, o); cb && cb(); } },
+             local: (() => {
+               const LOCAL = { ydsRatePromptState: "done", ...(SPEC.saved || {}) };
+               const pick = (k) => {
+                 if (k == null) return { ...LOCAL };
+                 const keys = Array.isArray(k) ? k : typeof k === "string" ? [k] : Object.keys(k);
+                 return Object.fromEntries(keys.filter(x => x in LOCAL).map(x => [x, LOCAL[x]]));
+               };
+               window.__local = LOCAL;
+               return {
+                 get: (k, cb) => cb ? cb(pick(k)) : Promise.resolve(pick(k)),
+                 set: (o, cb) => { Object.assign(LOCAL, o); return cb ? cb() : Promise.resolve(); },
+                 remove: (k, cb) => { [].concat(k).forEach(x => delete LOCAL[x]); return cb ? cb() : Promise.resolve(); }
+               };
+             })(),
+             session: { get: (k, cb) => cb && cb({}), set: (o, cb) => cb && cb() },
+             onChanged: { addListener(fn) { (window.__onChanged ||= []).push(fn); } } }
+};
+// No network in this harness: Google translation turns English into a marker.
+window.fetch = async (url) => {
+  if (SPEC.mockClaude && String(url).startsWith("https://api.anthropic.com/")) {
+    return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: "1. 你好（Claude）" }] }) };
+  }
+  return { ok: false, status: 0, json: async () => ({}), text: async () => "" };
+};
+window.__asked = [];
+</script>
+<script src="../i18n.js"></script>
+<script src="../platform.js"></script>
+<script>
+const CUES = {
+  en: [{ start: 0, end: 600, text: "Hello there" }],
+  zh: [{ start: 0, end: 600, text: "你好" }],
+  ja: [{ start: 0, end: 600, text: "こんにちは" }],
+  ko: [{ start: 0, end: 600, text: "안녕하세요" }],
+  "zh-Hant": [{ start: 0, end: 600, text: "你好（繁）" }]
+};
+window.YDS_PLATFORMS = {
+  detect: () => "mock",
+  create: (id, ctx) => {
+    setTimeout(() => ctx.onTrackList(SPEC.tracks), 0);
+    if (YT) setTimeout(() => ctx.ingest({ cues: CUES.en, lang: "en", isAsr: false, key: "en" }), SPEC.enDelay || 60);
+    return {
+      // ?yt=1: a YouTube-shaped player instead — captions must be on to get a
+      // track, and nothing is paired; the saved-translation rules are shared.
+      id: "mock", requiresCcForTracks: YT, pairsSiteTracks: !YT,
+      looksLikeVideoPage: () => true,
+      getVideoId: () => "mock-1",
+      getVideoEl: () => document.getElementById("v"),
+      getContainer: () => document.getElementById("fake-player"),
+      isCcOn: () => !SPEC.ccOff,
+      nativeLines: () => [document.querySelector(".site-caption").textContent],
+      nativeCaptionWidth: () => 0,
+      captionEls: () => [document.querySelector(".site-caption")],
+      observeTarget: () => document.getElementById("fake-player"),
+      start() {}, forgetLoadedCues() {}, reset() {},
+      requestTrack(t) {
+        window.__asked.push(t.languageCode);
+        // An ad swallowing the first request for this language.
+        if (SPEC.dropFirst === t.languageCode && !window.__dropped) { window.__dropped = true; return; }
+        setTimeout(() => ctx.ingest({ cues: CUES[t.languageCode], lang: t.languageCode, isAsr: false, key: t.languageCode }), 50);
+      }
+    };
+  }
+};
+window.requestAnimationFrame = (fn) => setTimeout(() => fn(performance.now()), 16);
+</script>
+<script src="../content.js"></script>
+<script>
+const overlayNow = () => [...document.querySelectorAll("#fake-player [class*='yds']")]
+  .filter(e => !e.closest(".yds-toast")).map(e => e.innerText).join(" ").replace(/[↕\s]+/g, " ").trim();
+const samples = [];
+window.__info = null;
+const askInfo = () => new Promise(r => (window.__onMessage || []).forEach(fn => fn({ type: "YDS_GET_INFO" }, {}, r)));
+if (SPEC.switchSource) setTimeout(() => (window.__onMessage || []).forEach(fn =>
+  fn({ type: "YDS_SET_SOURCE", languageCode: SPEC.switchSource, kind: SPEC.switchKind || "" }, {}, () => {})), 600);
+setTimeout(async () => { window.__info = await askInfo(); }, 1300);
+if (SPEC.switchTo) setTimeout(() => {
+  const next = { ...STORE.ydsSettings, translationProvider: SPEC.switchTo,
+                 apiKeys: { ...STORE.ydsSettings.apiKeys, [SPEC.switchTo]: "test-key-2" } };
+  (window.__onChanged || []).forEach(fn => fn({ ydsSettings: { oldValue: STORE.ydsSettings, newValue: next } }, "sync"));
+}, 700);
+if (SPEC.clickUse) {
+  setTimeout(() => (window.__onMessage || []).forEach(fn => fn({ type: "YDS_APPROVE_PAID_API" }, {}, () => {})), 400);
+  for (let t = 500; t < 1500; t += 50) setTimeout(() => samples.push(overlayNow()), t);
+}
+setTimeout(() => {
+  const site = document.querySelector(".site-caption");
+  const siteHidden = getComputedStyle(site).visibility === "hidden" || getComputedStyle(site).display === "none"
+                  || getComputedStyle(site).opacity === "0";
+  const overlay = [...document.querySelectorAll("#fake-player [class*='yds']")]
+    .filter(e => !e.closest(".yds-toast"))
+    .map(e => e.innerText).join(" ");
+  const hint = !!document.querySelector(".yds-toast");
+  const promptEl = document.querySelector(".yds-paid-api-confirm");
+  const got = { asked: [...window.__asked].sort().join(","), siteHidden,
+                overlayHas: SPEC.want.overlayHas.filter(t => overlay.includes(t)), hint, prompt: !!promptEl };
+  const checks = [
+    ["asked", got.asked === SPEC.want.asked],
+    ["siteHidden", SPEC.want.siteHidden === null || got.siteHidden === SPEC.want.siteHidden],
+    ["overlay", got.overlayHas.length === SPEC.want.overlayHas.length
+                && (!SPEC.want.hint || SPEC.want.overlayHas.length || !overlay.replace(/[↕\s]/g, ""))],
+    ["hint", SPEC.want.hint === null || got.hint === SPEC.want.hint],
+    ["prompt", got.prompt === SPEC.want.prompt],
+    ["source now", !SPEC.want.sourceNow || (window.__info && window.__info.sourceLang === SPEC.want.sourceNow)],
+    ["choice offered", !SPEC.want.sourceNow || SPEC.switchKind || (window.__info && window.__info.sourceOptions.length === 2)],
+    ["opt-in offered", !SPEC.want.optIn || (window.__info && window.__info.sourceOptions.some(t => t.aiTranslated))],
+    ["no original", !SPEC.want.overlayLacks || !overlay.includes(SPEC.want.overlayLacks)],
+    ["expired removed", !SPEC.want.savedGone || !("ydsSaved|mock|mock-1|zh-Hans|en" in (window.__local || {}))],
+    ["saved", !SPEC.want.savedKey || !!(window.__local && window.__local[SPEC.want.savedKey])],
+    ["steady", !SPEC.want.steady || (samples.length > 10 && samples.every(x => x.includes("Hello there") && x.includes("你好")))],
+    ["hint text", !SPEC.want.hintHas || (document.querySelector(".yds-toast") || {}).textContent.includes(SPEC.want.hintHas)]
+  ];
+  const pass = checks.every(c => c[1]);
+  document.getElementById("out").textContent =
+    `case ${CASE}: ${SPEC.why}\n` +
+    `want: ${JSON.stringify(SPEC.want)}\n` +
+    `got:  ${JSON.stringify(got)}\n` +
+    `overlay text: ${JSON.stringify(overlay)}\n` +
+    `hint: ${hint ? document.querySelector(".yds-toast").textContent : "-"}\n` +
+    `samples: ${samples.length}, distinct: ${JSON.stringify([...new Set(samples)])}\n` +
+    `prompt: ${promptEl ? promptEl.innerText.replace(/\s+/g, " ") : "-"}\n\n` +
+    checks.map(c => `${c[1] ? "ok  " : "BAD "} ${c[0]}`).join("\n") + "\n\n" +
+    (pass ? "PASS" : "FAIL");
+  window.__result = { case: CASE, pass, got };
+}, SPEC.wait || 1500);
+</script>

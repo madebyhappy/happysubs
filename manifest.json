@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_appName__",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "__MSG_appDesc__",
   "default_locale": "en",
   "permissions": [
@@ -115,6 +115,14 @@
       "matches": [
         "*://vimeo.com/*",
         "*://player.vimeo.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "inject-bilibili.js"
+      ],
+      "matches": [
+        "https://www.bilibili.com/*"
       ]
     }
   ],

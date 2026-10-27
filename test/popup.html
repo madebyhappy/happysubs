@@ -25,7 +25,7 @@ const STORE = { ydsSettings: {
 // video already shown without a rating — the popup's turn to ask.
 const LOCAL = { ydsRating: { videos: 8, step: 1 } };
 window.chrome = {
-  runtime: { id: "yds-test", getURL: (f) => "/" + f, lastError: null },
+  runtime: { id: "yds-test", getURL: (f) => "/" + f, lastError: null, getManifest: () => ({ version: "2.2.2" }) },
   i18n: { getUILanguage: () => "en-US" },        // pretend the browser is English
   storage: {
     sync: {

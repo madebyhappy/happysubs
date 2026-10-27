@@ -586,6 +586,8 @@
       border-bottom: 1px solid rgba(255,255,255,0.28);
     }
     footer a.more:hover { border-bottom-color: var(--text); text-decoration: none; }
+    /* The contact address is one long word; on a phone it has to be allowed to wrap. */
+    a[href^="mailto:"] { overflow-wrap: anywhere; }
 
     @media (max-width: 640px) {
       .hero { padding: 50px 0 40px; }
@@ -643,8 +645,8 @@
         <a href="#features" data-en="Features">功能</a>
         <a href="#install" data-en="Install">安装</a>
         <a href="#live" data-en="Live transcription">实时听译</a>
-        <a href="#changelog" data-en="Changelog">更新日志</a>
         <a href="#faq" data-en="FAQ">常见问题</a>
+        <a href="#changelog" data-en="Changelog">更新日志</a>
       </div>
       <div class="nav-right">
         <button class="lang-toggle" id="langToggle" type="button" aria-label="Switch language">EN</button>
@@ -657,7 +659,7 @@
     <div class="container">
       <img class="hero-mark" src="icons/icon128.png" width="128" height="128" alt="" />
       <h1 data-en="Dual subtitles for your videos">为视频添加双语字幕</h1>
-      <div class="version-pill">v2.2.0</div>
+      <div class="version-pill">v2.2.2</div>
       <p class="sub" data-en="Currently supports <strong>YouTube</strong>, <strong>Vimeo</strong>, <strong>Bilibili</strong> and <strong>Zoom recordings</strong>, plus more sites such as Coursera. Uses the video's own subtitles plus free Google Translate, with optional Claude / OpenAI / Gemini / DeepSeek AI translation. Videos with no subtitles at all can be transcribed as they play.">
         目前支持 <strong>YouTube</strong>、<strong>Vimeo</strong>、<strong>Bilibili</strong> 和 <strong>Zoom 录像</strong>，以及 Coursera 等更多网站。使用视频自带字幕 + Google 免费翻译，也可选 Claude / OpenAI / Gemini / DeepSeek AI 翻译。完全没有字幕的视频，可以边播边听译。
       </p>
@@ -932,11 +934,59 @@ iwr "$repo/start.bat" -OutFile start.bat</pre>
     </div>
   </section>
 
+  <section id="faq">
+    <div class="container">
+      <h2 data-en="FAQ">常见问题</h2>
+      <p class="section-desc"></p>
+
+      <details>
+        <summary data-en="Why do I have to turn on CC on YouTube but not on Vimeo?">为什么 YouTube 必须开 CC，Vimeo 却不用？</summary>
+        <p data-en="On YouTube the extension works by intercepting the player's own caption request, and YouTube only fires that request when CC is on. Vimeo publishes its subtitle tracks as ordinary files the extension can read on its own, so nothing needs turning on first. If you only want the translation, turn on <strong>Translation only</strong> in the popup — the second language then shows on its own with the player's captions closed.">YouTube 上扩展是靠拦截播放器自己去拿字幕的请求，而 YouTube 只在你开 CC 的时候才发这个请求。Vimeo 则是把字幕轨当普通文件放出来，扩展可以自己去读，所以不需要先开任何东西。如果你只想看译文，在插件弹窗里打开 <strong>仅显示翻译字幕</strong>，关着 CC 也会单独显示第二语言。</p>
+      </details>
+      <details>
+        <summary data-en="Do I have to install anything for Bilibili?">B 站需要装什么吗？</summary>
+        <p data-en="No. Bilibili subtitle tracks are read straight from the site, the same as everywhere else. The local service is only for live transcription, and only for videos that have no subtitle track at all.">不需要。B 站的字幕轨跟其他平台一样直接读取。本地服务只跟实时听译有关，而实时听译只用于完全没有字幕轨的视频。</p>
+      </details>
+      <details>
+        <summary data-en="Bilibili says this video has no subtitles — is that right?">B 站上提示这个视频没有字幕，是真的吗？</summary>
+        <p data-en="Probably. Bilibili only lists subtitle tracks to signed-in viewers, so signing in is worth checking first. If you are signed in and the extension still finds nothing, the video genuinely has none — that is what live transcription is for.">多半是。B 站只对**登录用户**返回字幕列表，所以先确认你登录了。如果已经登录、扩展仍然找不到，那就是真的没有——这正是实时听译存在的理由。</p>
+      </details>
+      <details>
+        <summary data-en="What if the video has no captions?">如果视频没有字幕怎么办？</summary>
+        <p data-en="On YouTube and Vimeo most videos have auto-generated captions. On Bilibili most have none, which is what <a href=&quot;#live&quot;>live transcription</a> is for — it listens to the audio and writes the subtitles itself.">YouTube 和 Vimeo 上大部分视频有自动生成字幕。B 站上大部分**没有**，这正是<a href="#live">实时听译</a>的用武之地——它直接听音频，自己把字幕写出来。</p>
+      </details>
+      <details>
+        <summary data-en="How accurate is the translation?">翻译准确吗？</summary>
+        <p data-en="By default it uses native captions or free Google Translate. If you need higher quality, you can manually enable Claude, OpenAI, Gemini or DeepSeek for the current video.">默认优先使用视频自带字幕或 Google 免费翻译。如果你需要更高质量，可以手动为当前视频启用 Claude / OpenAI / Gemini / DeepSeek。</p>
+      </details>
+      <details>
+        <summary data-en="Does it upload my data?">会上传我的数据吗？</summary>
+        <p data-en="The source is open for audit. The extension reads the current video's captions and sends caption text only to the translation provider you choose. Paid APIs are called only after explicit confirmation.">扩展代码完全开源可审。它只读取当前视频字幕，并只把字幕文本发送到你选择的翻译源。付费 API 只有在明确确认后才会调用。</p>
+      </details>
+      <details>
+        <summary data-en="Found a bug or have a suggestion?">遇到问题或有建议，怎么联系？</summary>
+        <p data-en="<a href=&quot;mailto:contact+happysubs@madebyhappy.dev?subject=HappySubs&quot;>Email me</a>."><a href="mailto:contact+happysubs@madebyhappy.dev?subject=HappySubs">发邮件</a>。</p>
+      </details>
+    </div>
+  </section>
+
   <section id="changelog">
     <div class="container">
       <h2 data-en="Changelog">更新日志</h2>
 
       <details open>
+        <summary data-en="2.2.2 — Bilibili fixes, AI translations saved">2.2.2 — B 站修复、AI 翻译会保存</summary>
+        <p data-en="<strong>Bilibili</strong>: known issues fixed; subtitles now show properly."><strong>B 站</strong>：修复了已知问题，现在可以正常显示字幕。</p>
+        <p data-en="<strong>AI translations are saved automatically</strong> on this device: a video you've already watched isn't translated, or paid for, again. Kept for 7 days by default; change it in settings."><strong>AI 翻译自动保存在本机</strong>：看过的视频不用再翻译、再付费。默认保存时长为 7 天，可在设置里调整。</p>
+        <p data-en="The settings show the version number.">设置页显示版本号。</p>
+      </details>
+
+      <details>
+        <summary data-en="2.2.1 — new website address, panel language">2.2.1 — 新网址、面板语言</summary>
+        <p data-en="The website, privacy policy and uninstall page moved to madebyhappy.github.io/happysubs. Switching the interface language now changes everything in the popup at once, and the live-transcription start note says “listening” in every language.">项目主页、隐私政策、卸载反馈页搬到新网址 madebyhappy.github.io/happysubs；切换界面语言时，弹窗里的内容会立刻换成新语言；实时听译的启动提示统一写成 “listening”。</p>
+      </details>
+
+      <details>
         <summary data-en="2.2.0 — Zoom recordings, embedded YouTube, more sites, better live transcription, more languages">2.2.0 — Zoom 录像、嵌入的 YouTube、更多网站、实时听译升级、更多语言</summary>
         <p data-en="<strong>Zoom recordings</strong>: bilingual subtitles, a translated transcript panel, and a bilingual transcript export."><strong>Zoom 录像</strong>：双语字幕、转录稿栏译文、导出双语文稿。</p>
         <p data-en="<strong>YouTube embedded in other sites</strong> now gets bilingual subtitles."><strong>嵌在其他网站里的 YouTube</strong> 也有双语字幕了。</p>
@@ -988,38 +1038,6 @@ iwr "$repo/start.bat" -OutFile start.bat</pre>
     </div>
   </section>
 
-  <section id="faq">
-    <div class="container">
-      <h2 data-en="FAQ">常见问题</h2>
-      <p class="section-desc"></p>
-
-      <details>
-        <summary data-en="Why do I have to turn on CC on YouTube but not on Vimeo?">为什么 YouTube 必须开 CC，Vimeo 却不用？</summary>
-        <p data-en="On YouTube the extension works by intercepting the player's own caption request, and YouTube only fires that request when CC is on. Vimeo publishes its subtitle tracks as ordinary files the extension can read on its own, so nothing needs turning on first. If you only want the translation, turn on <strong>Translation only</strong> in the popup — the second language then shows on its own with the player's captions closed.">YouTube 上扩展是靠拦截播放器自己去拿字幕的请求，而 YouTube 只在你开 CC 的时候才发这个请求。Vimeo 则是把字幕轨当普通文件放出来，扩展可以自己去读，所以不需要先开任何东西。如果你只想看译文，在插件弹窗里打开 <strong>仅显示翻译字幕</strong>，关着 CC 也会单独显示第二语言。</p>
-      </details>
-      <details>
-        <summary data-en="Do I have to install anything for Bilibili?">B 站需要装什么吗？</summary>
-        <p data-en="No. Bilibili subtitle tracks are read straight from the site, the same as everywhere else. The local service is only for live transcription, and only for videos that have no subtitle track at all.">不需要。B 站的字幕轨跟其他平台一样直接读取。本地服务只跟实时听译有关，而实时听译只用于完全没有字幕轨的视频。</p>
-      </details>
-      <details>
-        <summary data-en="Bilibili says this video has no subtitles — is that right?">B 站上提示这个视频没有字幕，是真的吗？</summary>
-        <p data-en="Probably. Bilibili only lists subtitle tracks to signed-in viewers, so signing in is worth checking first. If you are signed in and the extension still finds nothing, the video genuinely has none — that is what live transcription is for.">多半是。B 站只对**登录用户**返回字幕列表，所以先确认你登录了。如果已经登录、扩展仍然找不到，那就是真的没有——这正是实时听译存在的理由。</p>
-      </details>
-      <details>
-        <summary data-en="What if the video has no captions?">如果视频没有字幕怎么办？</summary>
-        <p data-en="On YouTube and Vimeo most videos have auto-generated captions. On Bilibili most have none, which is what <a href=&quot;#live&quot;>live transcription</a> is for — it listens to the audio and writes the subtitles itself.">YouTube 和 Vimeo 上大部分视频有自动生成字幕。B 站上大部分**没有**，这正是<a href="#live">实时听译</a>的用武之地——它直接听音频，自己把字幕写出来。</p>
-      </details>
-      <details>
-        <summary data-en="How accurate is the translation?">翻译准确吗？</summary>
-        <p data-en="By default it uses native captions or free Google Translate. If you need higher quality, you can manually enable Claude, OpenAI, Gemini or DeepSeek for the current video.">默认优先使用视频自带字幕或 Google 免费翻译。如果你需要更高质量，可以手动为当前视频启用 Claude / OpenAI / Gemini / DeepSeek。</p>
-      </details>
-      <details>
-        <summary data-en="Does it upload my data?">会上传我的数据吗？</summary>
-        <p data-en="The source is open for audit. The extension reads the current video's captions and sends caption text only to the translation provider you choose. Paid APIs are called only after explicit confirmation.">扩展代码完全开源可审。它只读取当前视频字幕，并只把字幕文本发送到你选择的翻译源。付费 API 只有在明确确认后才会调用。</p>
-      </details>
-    </div>
-  </section>
-
   <section class="closing" id="get">
     <div class="container">
       <span class="bars" aria-hidden="true"><i></i><i></i></span>
@@ -1031,7 +1049,7 @@ iwr "$repo/start.bat" -OutFile start.bat</pre>
 
   <footer>
     <div class="container">
-      <p>Made by <a class="more" href="https://madebyhappy.github.io/" target="_blank" rel="noopener">Happy</a></p>
+      <p>Made by <a class="more" href="https://madebyhappy.github.io/" target="_blank" rel="noopener">Happy</a> · <a class="more" href="mailto:contact+happysubs@madebyhappy.dev?subject=HappySubs">Contact</a></p>
     </div>
   </footer>
 

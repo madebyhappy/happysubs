@@ -44,11 +44,12 @@ window.fetch = (url) => {
   const u = String(url);
   window.__fetched.push(u);
   let body = null;
-  if (u.includes("/x/web-interface/view")) body = VIEW;
+  if (u.includes("/x/web-interface/view")) body = window.__VIEW || VIEW;
+  else if (u.includes("/x/player/wbi/v2") && window.__WBI) body = window.__WBI;
   else if (u.includes("/x/player/v2")) body = PLAYER;
   else if (TRACKS[u]) body = TRACKS[u];
   if (!body) return Promise.reject(new Error("unexpected url " + u));
-  return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+  return Promise.resolve({ ok: true, json: () => Promise.resolve(body), text: () => Promise.resolve(JSON.stringify(body)) });
 };
 </script>
 <script src="../platform.js"></script>
@@ -118,6 +119,34 @@ const ctx = {
   check("//… and http:// subtitle urls become https",
         !window.__fetched.some(u => u.startsWith("//") || u.startsWith("http://")),
         JSON.stringify(window.__fetched.filter(u => !u.startsWith("https://"))));
+
+  // The wbi endpoint's answer stands, even when it is "no subtitles": the old
+  // endpoint has been seen handing back another video's track there.
+  {
+    window.__WBI = { code: 0, data: { subtitle: { subtitles: [] } } };
+    const lists2 = [];
+    const b = window.YDS_PLATFORMS.create("bilibili", { ...ctx, onTrackList: (t) => lists2.push(t) });
+    b.start();
+    await settle(600);
+    const l = lists2[lists2.length - 1];
+    check("wbi says no subtitles → none, old endpoint not consulted",
+          !l || l.length === 0, JSON.stringify(l));
+  }
+  // A track that runs far past the end of the video is another video's.
+  {
+    window.__VIEW = { code: 0, data: { cid: 111, duration: 600, pages: [{ cid: 111, duration: 600 }] } };
+    window.__WBI = { code: 0, data: { subtitle: { subtitles: [
+      { lan: "en", lan_doc: "English", subtitle_url: "https://sub.example/long.json" }] } } };
+    TRACKS["https://sub.example/long.json"] = { body: [{ from: 0, to: 2, content: "hi" }, { from: 2390, to: 2392, content: "bye" }] };
+    const ing3 = [];
+    const c = window.YDS_PLATFORMS.create("bilibili", { ...ctx, onTrackList() {}, ingest: (p) => ing3.push(p) });
+    c.start();
+    await settle(600);
+    c.requestTrack({ languageCode: "en", kind: "" });
+    await settle(500);
+    check("a track running past the video's end is ignored", ing3.length === 0, String(ing3.length));
+    window.__VIEW = null; window.__WBI = null;
+  }
 
   // DOM readers.
   check("getVideoEl finds the player video", a.getVideoEl() === document.getElementById("v"), "");

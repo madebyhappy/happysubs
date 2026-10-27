@@ -150,6 +150,12 @@
       font-size: 12px; padding: 5px 11px; border-radius: 8px; cursor: pointer;
     }
     .resetBtn:hover { background: rgba(255,255,255,.6); color: var(--ink); }
+    /* Bottom left of the settings: which version this is, and what changed. */
+    .versionLink {
+      display: inline-block; margin: 10px 0 0 4px;
+      font-size: 12px; color: var(--ink-soft); text-decoration: none;
+    }
+    .versionLink:hover { color: var(--ink); text-decoration: underline; }
 
     /* ---- tabs ---- */
     /* Everything else in this popup is a white rounded box — the fields, the
@@ -472,6 +478,12 @@
     <select id="lang"></select>
   </div>
 
+  <!-- Only when the video has more than one track to translate from. -->
+  <div class="row" id="sourceRow" hidden>
+    <label for="sourceTrack" data-i18n="translateFrom">原文字幕</label>
+    <select id="sourceTrack"></select>
+  </div>
+
   <div class="row">
     <label for="provider" data-i18n="translationSource">翻译源</label>
     <select id="provider">
@@ -571,6 +583,16 @@
       </select>
     </div>
 
+    <div class="row">
+      <label for="savedDays" data-i18n="savedDaysLabel">保存 AI 翻译</label>
+      <select id="savedDays">
+        <option value="1" data-i18n="savedDays1">1 天</option>
+        <option value="7" data-i18n="savedDays7">7 天</option>
+        <option value="30" data-i18n="savedDays30">30 天</option>
+        <option value="0" data-i18n="savedDays0">永久</option>
+      </select>
+    </div>
+
     <div class="secHead" data-i18n="appearanceSection">字幕外观</div>
 
     <div class="muted" id="appearanceNote" hidden data-i18n="appearanceNote">这个视频用的是自带字幕，译文直接加在播放器字幕里，字体和大小跟着播放器走，所以这里没有可调的。自动生成字幕的视频、以及打开上面的开关时，这里会出现外观设置。</div>
@@ -631,6 +653,8 @@
     </div>
 
     </div><!-- /appearanceControls -->
+
+    <a id="versionLink" class="versionLink" data-i18n-title="versionLinkTitle" href="https://madebyhappy.github.io/happysubs/#changelog" target="_blank" rel="noopener"></a>
 
   </div><!-- /settingsView -->
 

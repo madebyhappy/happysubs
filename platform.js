@@ -979,6 +979,7 @@
 
   function createBilibili(ctx) {
     let tracks = [];          // [{languageCode, kind, name, url}]
+    let videoDuration = 0;    // seconds, from the view API
     let lastSignature = "";
     let loadTimer = null;
     const loadedKeys = new Set();
@@ -1004,8 +1005,54 @@
       return p && p !== "1" ? `${bv}#p${p}` : bv;
     }
 
+    // From the content script the API answers as if signed out (no subtitle
+    // list), so requests go through inject-bilibili.js in the page, which
+    // carries the viewer's session. A direct fetch is the fallback for when
+    // the page script never answers.
+    let bridgeSeq = 0;
+    const bridgeWaiters = new Map();
+    window.addEventListener("YDS_BILI_RESULT", (e) => {
+      let res;
+      try { res = JSON.parse(e.detail); } catch { return; }
+      const w = res && bridgeWaiters.get(res.id);
+      if (!w) return;
+      bridgeWaiters.delete(res.id);
+      if (res.ok) w.resolve(res.text); else w.reject(new Error(res.error));
+    });
+
+    let bridgeReady = null;
+    function viaPage(url) {
+      if (!bridgeReady) {
+        bridgeReady = new Promise(r => window.addEventListener("YDS_BILI_READY", r, { once: true }));
+        injectPageScript("inject-bilibili.js", "yds-inject-bilibili");
+      }
+      return new Promise((resolve, reject) => {
+        const id = `b${++bridgeSeq}`;
+        const timer = setTimeout(() => {
+          bridgeWaiters.delete(id);
+          reject(new Error("page bridge timeout"));
+        }, 8000);
+        bridgeWaiters.set(id, {
+          resolve: (t) => { clearTimeout(timer); resolve(t); },
+          reject: (err) => { clearTimeout(timer); reject(err); }
+        });
+        bridgeReady.then(() => window.dispatchEvent(
+          new CustomEvent("YDS_BILI_FETCH", { detail: JSON.stringify({ id, url }) })));
+      });
+    }
+
+    // Only the API needs the session. The subtitle files are public, and
+    // their hosts refuse a request that carries cookies.
     async function json(url) {
-      const r = await fetch(url, { credentials: "include" });
+      const api = /^https:\/\/api\.bilibili\.com\//.test(url);
+      if (api) {
+        try {
+          return JSON.parse(await viaPage(url));
+        } catch (e) {
+          ctx.log("bilibili: page fetch failed, trying directly", e);
+        }
+      }
+      const r = await fetch(url, { credentials: api ? "include" : "omit" });
       return r.json();
     }
 
@@ -1025,8 +1072,28 @@
       if (pages && pages[part - 1]) cid = pages[part - 1].cid;
       if (!cid) return [];
 
-      const player = await json(`https://api.bilibili.com/x/player/v2?bvid=${bv}&cid=${cid}`);
-      const subs = (player && player.data && player.data.subtitle && player.data.subtitle.subtitles) || [];
+      const page = (pages && pages[part - 1]) || null;
+      videoDuration = Number((page && page.duration) || (view.data && view.data.duration)) || 0;
+
+      // The wbi endpoint is the one Bilibili's own player uses, and its answer
+      // is the answer — an empty list included. The old endpoint is only for
+      // when wbi itself fails: it leaves out uploaded tracks, and on a video
+      // with no subtitles it now and then hands back ANOTHER video's (seen: a
+      // 40-minute stand-up set getting a 10-minute film-editing tutorial's AI
+      // Chinese, which was then translated and never lined up with anything).
+      let subs = [];
+      for (const path of ["x/player/wbi/v2", "x/player/v2"]) {
+        try {
+          const player = await json(`https://api.bilibili.com/${path}?bvid=${bv}&cid=${cid}`);
+          if (player && player.code === 0) {
+            subs = (player.data && player.data.subtitle && player.data.subtitle.subtitles) || [];
+            break;
+          }
+          ctx.log(`bilibili: ${path} answered code ${player && player.code}`);
+        } catch (e) {
+          ctx.log(`bilibili: ${path} failed`, e);
+        }
+      }
       return subs.map(sub => {
         let url = String(sub.subtitle_url || "");
         if (url.startsWith("//")) url = "https:" + url;
@@ -1034,10 +1101,17 @@
         const lan = String(sub.lan || "");
         return {
           url,
-          // "ai-zh" marks machine transcription; strip the prefix but keep the
+          // "ai-zh" marks a machine track; strip the prefix but keep the
           // rest of the code ("zh-CN", "en-US") so Hans/Hant still separate.
           languageCode: lan.replace(/^ai-/, ""),
           kind: /^ai-/.test(lan) ? "asr" : "",
+          // ai_type 1 is Bilibili's machine TRANSLATION of a foreign-language
+          // video (0 is recognition of the speech itself). Checked across
+          // videos: Chinese talks carry ai-zh/0; English and Japanese ones
+          // carry ai-zh/1, sometimes alongside a whole set of ai-xx/1.
+          // Translating one of those again only drifts further from what
+          // was said.
+          aiTranslated: /^ai-/.test(lan) && Number(sub.ai_type) === 1,
           name: String(sub.lan_doc || lan)
         };
       }).filter(t => t.url && t.languageCode);
@@ -1056,7 +1130,7 @@
       lastSignature = signature;
       tracks = next;
       ctx.log("bilibili: tracks →", tracks.map(t => `${t.languageCode}${t.kind === "asr" ? "(asr)" : ""}`).join(", ") || "(none)");
-      ctx.onTrackList(tracks.map(t => ({ languageCode: t.languageCode, kind: t.kind, name: t.name })));
+      ctx.onTrackList(tracks.map(t => ({ languageCode: t.languageCode, kind: t.kind, name: t.name, aiTranslated: !!t.aiTranslated })));
     }
 
     async function loadTrack(track, reason) {
@@ -1082,6 +1156,13 @@
         .sort((a, b) => a.start - b.start);
       if (!cues.length) {
         loadedKeys.delete(key);
+        return;
+      }
+      // A track running well past the end of the video belongs to another
+      // one (see fetchTracks). Left marked as loaded, so it is not retried.
+      const last = cues[cues.length - 1].end;
+      if (videoDuration && last > videoDuration + 30) {
+        ctx.log(`bilibili: ${track.languageCode} runs to ${Math.round(last)}s on a ${Math.round(videoDuration)}s video, not this video's — ignored`);
         return;
       }
       ctx.log(`bilibili: ${cues.length} cues for ${track.languageCode} (${reason})`);
@@ -1113,6 +1194,9 @@
       // We pull tracks straight from the API, so the player's own subtitle
       // switch has no say in whether we can get them.
       requiresCcForTracks: false,
+      // Every track comes by URL, so content.js pairs the site's own tracks
+      // (original + target) itself rather than following the caption switch.
+      pairsSiteTracks: true,
       looksLikeVideoPage() {
         // /video/BV… is the common one, but the same player also serves
         // bangumi episodes, festival pages and playlist views.

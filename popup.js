@@ -21,6 +21,8 @@ const DEFAULTS = {
   background: "rgba(0,0,0,0.6)",
   translationProvider: "google",
   uiLang: "auto",
+  // How long a paid translation is kept on this device; 0 = until removed.
+  savedDays: 7,
   subtitleMode: "inline",
   takeoverCaptions: true,
   translationOnly: false,
@@ -352,6 +354,7 @@ let lastInfo = null;
 function noteVideoInfo(info) {
   if (!info) return;
   lastInfo = info;
+  try { renderSourceRow(info); } catch { /* before the DOM is wired */ }
   let changed = false;
   if (typeof info.sourceIsAsr === "boolean" && currentIsAsr !== info.sourceIsAsr) {
     currentIsAsr = info.sourceIsAsr;
@@ -707,6 +710,20 @@ function statusTextFor(info, tab) {
   // In translation-only mode the CC prompt would be wrong — that's the whole
   // point of the mode. But if we still have no subtitles, say so plainly and
   // give the one workaround that always works.
+  // Only Bilibili's machine translations: nothing translated until the
+  // viewer opts in under "Original track".
+  if (st.mode === "site_ai_only") {
+    let lang = st.lang || "";
+    try { lang = new Intl.DisplayNames([globalThis.ydsUiLang || "en"], { type: "language" }).of(lang) || lang; } catch {}
+    return ydsT("siteOnlyAiTranslation", { lang });
+  }
+  // Bilibili hands over its tracks by itself, so the CC advice below is
+  // never the answer there — checked first.
+  if (info.platform === "bilibili" && !info.preCuesLoaded) {
+    return (info.tracks && info.tracks.length)
+      ? ydsT("statusBilibiliReading")
+      : ydsT("statusBilibiliNoTrack");
+  }
   if ($("translationOnly").checked) {
     return info.preCuesLoaded ? ydsT("statusTranslationOnly") : ydsT("statusTranslationOnlyNeedsCc");
   }
@@ -1069,6 +1086,7 @@ async function init() {
   $("enabled").checked = !!settings.enabled;
   $("transcriptPanelBilingual").checked = settings.transcriptPanelBilingual !== false;
   $("uiLang").value = settings.uiLang || "auto";
+  $("savedDays").value = String(settings.savedDays ?? 7);
   $("subtitleMode").value = settings.subtitleMode || "inline";
   $("takeoverCaptions").checked = !!settings.takeoverCaptions;
   $("bottomOffset").value = settings.bottomOffset;
@@ -1174,6 +1192,8 @@ async function init() {
     if (res.untranslated) saved += " " + ydsT("srtSomeUntranslated", { n: res.untranslated });
     pinStatus(saved);
   });
+
+  $("savedDays").addEventListener("change", (e) => save({ savedDays: Number(e.target.value) }));
 
   $("uiLang").addEventListener("change", async (e) => {
     const value = e.target.value;
@@ -1413,4 +1433,46 @@ async function init() {
 
 init().catch((err) => {
   $("status").textContent = ydsT("initFailed") + (err?.message || err);
+});
+
+// Settings, bottom left: the installed version, linking to the changelog.
+{
+  const link = document.getElementById("versionLink");
+  if (link) {
+    try { link.textContent = "v" + chrome.runtime.getManifest().version; } catch {}
+  }
+}
+
+// "Original track": only when the video offers more than one track that could
+// be the original (Bilibili with both English and Chinese, for a Japanese
+// target). The page picks one by itself; this is for when it picked wrong.
+// A machine-translated track is listed too, but never picked by the page: it
+// is there for the viewer to opt into, next to "don't translate".
+function renderSourceRow(info) {
+  const row = $("sourceRow");
+  const opts = (info && info.sourceOptions) || [];
+  const optIn = opts.some(t => t.aiTranslated);
+  row.hidden = opts.length < 2 && !optIn;
+  if (row.hidden) return;
+  const sel = $("sourceTrack");
+  let names = null;
+  try { names = new Intl.DisplayNames([globalThis.ydsUiLang || "en"], { type: "language" }); } catch {}
+  const langName = (t) => (names && names.of(t.languageCode)) || t.name || t.languageCode;
+  const label = (t) => t.aiTranslated ? ydsT("sourceAiTranslated", { lang: langName(t) })
+                                      : langName(t) + (t.kind === "asr" ? " (AI)" : "");
+  const key = (t) => `${t.languageCode}|${t.kind || ""}`;
+  const wanted = (optIn ? "none," : "") + opts.map(key).join(",") + "|" + (globalThis.ydsUiLang || "");
+  if (sel.dataset.opts !== wanted) {
+    sel.innerHTML = "";
+    if (optIn) sel.add(new Option(ydsT("sourceNone"), ""));
+    for (const t of opts) sel.add(new Option(label(t), key(t)));
+    sel.dataset.opts = wanted;
+  }
+  const current = opts.find(t => t.languageCode === info.sourceLang && (t.kind === "asr") === !!info.sourceIsAsrNow);
+  if (document.activeElement !== sel) sel.value = current ? key(current) : (optIn ? "" : sel.value);
+}
+
+$("sourceTrack").addEventListener("change", async (e) => {
+  const [languageCode = "", kind = ""] = e.target.value.split("|");
+  if (activeTabId != null) await sendContent(activeTabId, { type: "YDS_SET_SOURCE", languageCode, kind: kind || "" });
 });

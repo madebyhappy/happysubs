@@ -149,3 +149,9 @@ http://localhost:8794/test/options.html
 http://localhost:8794/test/vimeo-adapter.html?vtt=<URL-encoded .vtt 地址>
 
 签名 URL 有有效期（`expires` 参数），过期就换一条新的。
+
+### `test/site-tracks.html`
+
+B 站这类「所有字幕轨都能直接拿到」的网站怎么用自带字幕，以及付费翻译的保存（24 条，`?case=A`…`X`）：原文 + 目标语言都有时两行都用自带的、只有目标语言时不接管并提示、只有原文时自己翻译；自带的人工目标语言字幕不弹窗、也不被保存的翻译盖掉（P），在面板里主动点翻译按钮换成 API 时不闪；勾「仅显示翻译字幕」只剩译文（O）；B 站 AI 翻译出来的字幕（ai_type=1）不自动拿来翻译、可在「原文字幕」手动选（Q–S、W）；中英都有、目标日语时选英文、可在面板换成中文（T–V）；B 站字幕开关关着也照常显示；翻完的付费翻译会保存、下次直接载入、过期作废、换翻译源不重翻。加 `&yt=1` 用 YouTube 形状的播放器跑 J/L/M/N/X（X：请求自带中文时被广告吞掉，要能重试拿到，约 10 秒；Y：广告结束、英文到达时立刻重新请求中文），确认保存和换翻译源的规则在 YouTube 上一样。
+
+http://localhost:8794/test/site-tracks.html?case=A

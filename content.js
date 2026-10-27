@@ -53,6 +53,7 @@
       // Google is free/anonymous; the others need the user's own API key.
       translationProvider: "google",
       uiLang: "auto",          // panel language: "auto" | "en" | "zh" | "ja" | "vi"
+      savedDays: 7,            // keep paid translations this long; 0 = forever
       // Off by default the overlay rides along with the player's own caption
       // strip: no native captions, no second language. Turning this on detaches
       // it, so the translation shows on its own with the player's CC closed.
@@ -153,6 +154,22 @@
   let sourceLang = "";
   let sourceIsAsr = false;
   let betterSourceRequested = false;
+  // Sites that hand us every track (Bilibili): the video has nothing but
+  // target-language captions, so the site's own caption stays as it is.
+  let siteCaptionsOnly = false;
+  // The viewer chose their paid API over the site's own target-language track.
+  let siteTargetDeclined = false;
+  // ...whose cues stay on screen wherever the API has not got to yet, so the
+  // switch never leaves a gap.
+  let siteTargetStandIn = [];
+  // Showing a paid translation saved from an earlier visit: nothing is
+  // translated again unless the viewer changes language or provider, or asks.
+  let usingSavedTranslation = false;
+  // The track the viewer picked to translate from, when there is a choice
+  // (a site handing over both, say, English and Chinese for a Japanese
+  // target). { languageCode, kind } or null for "decide for me".
+  let sourceChoice = null;
+  let aiTranslationHinted = false;
 
   // Aborts any in-flight LLM/Google Translate calls when we get a better
   // source of cues (native track), a video change, or a settings change.
@@ -258,6 +275,13 @@
     const providerChanged = prev.translationProvider !== STATE.settings.translationProvider;
     const translationOnlyChanged = prev.translationOnly !== STATE.settings.translationOnly;
     const keysChanged = JSON.stringify(prev.apiKeys || {}) !== JSON.stringify(STATE.settings.apiKeys || {});
+    // A different language needs a different translation (a saved one for
+    // that language still applies). A different provider does not throw away
+    // one already paid for: only the popup's translate button replaces it.
+    if (langChanged) {
+      usingSavedTranslation = false;
+      if (sourceCuesCache) checkSavedTranslation();
+    }
 
     if (langChanged) {
       abortInflightTranslation("target language changed");
@@ -288,7 +312,8 @@
     if ((langChanged || providerChanged || keysChanged)
         && sourceCuesCache
         && STATE.settings.secondLang
-        && !preCuesNative.length) {
+        && !preCuesNative.length
+        && !usingSavedTranslation) {
       preCuesTranslated = [];
       const tl = toGoogleLang(STATE.settings.secondLang);
       translateSourceNow(tl, chooseSourceTranslationProvider(), "settings changed");
@@ -336,16 +361,137 @@
   // auto-generate captions for the language actually being spoken, so its
   // language code is the audio's, even when we go on to translate from
   // something else.
-  function pickSourceTrack() {
-    const human = availableTracks.filter(t => t.kind !== "asr");
-    const machine = availableTracks.find(t => t.kind === "asr") || null;
+  function pickSourceTrack(list = availableTracks) {
+    const human = list.filter(t => t.kind !== "asr");
+    const machine = list.find(t => t.kind === "asr") || null;
     const originalLang = machine ? machine.languageCode : "";
 
     if (originalLang) {
       const humanOriginal = human.find(t => langMatches(originalLang, t.languageCode));
       if (humanOriginal) return humanOriginal;
     }
-    return human[0] || machine || availableTracks[0] || null;
+    return human[0] || machine || list[0] || null;
+  }
+
+  // A site that gives us every track by URL (Bilibili) gets one rule, whatever
+  // the viewer's caption switch says:
+  //   - a track in another language plus the target → both lines from the
+  //     site's own tracks, drawn by us, the site's caption hidden;
+  //   - only another language → that track, translated by us;
+  //   - only the target language → nothing to pair it with, so the site's
+  //     caption is left exactly as it is.
+  function pairsSiteTracks() {
+    return !!(P && P.pairsSiteTracks);
+  }
+
+  // Tracks that could be translated from: not in the target language. A
+  // machine translation is one only when the viewer picks it — translating it
+  // again drifts further from what was said, so it is never chosen for them.
+  function siteSourceCandidates() {
+    return availableTracks.filter(t => !langMatches(STATE.settings.secondLang, t.languageCode));
+  }
+
+  // Which of them is the original. The site's own recognition of the speech
+  // says so outright (pickSourceTrack). Without it, on Bilibili a Chinese
+  // track beside a foreign one is nearly always the uploader's translation —
+  // a Chinese original comes with the site's own recognition of it, which
+  // the first rule already catches.
+  function pickSiteSource(list) {
+    if (sourceChoice) {
+      const chosen = list.find(t => t.languageCode === sourceChoice.languageCode && t.kind === sourceChoice.kind);
+      if (chosen) return chosen;
+    }
+    list = list.filter(t => !t.aiTranslated);
+    if (!list.length) return null;
+    if (!list.some(t => t.kind === "asr")) {
+      const foreign = list.find(t => t.kind !== "asr" && !/^zh/i.test(t.languageCode));
+      if (foreign) return foreign;
+    }
+    return pickSourceTrack(list);
+  }
+
+  // The viewer chose a different track to translate from, or none ("").
+  function chooseSource(languageCode, kind) {
+    if (!pairsSiteTracks()) return { ok: false };
+    const track = languageCode
+      ? siteSourceCandidates().find(t => t.languageCode === languageCode && t.kind === (kind || ""))
+      : null;
+    if (languageCode && !track) return { ok: false };
+    if (track && sourceCuesCache && sourceLang === track.languageCode && sourceIsAsr === (track.kind === "asr")) return { ok: true };
+    log(`source chosen by the viewer: ${track ? track.languageCode : "none"}`);
+    sourceChoice = track ? { languageCode: track.languageCode, kind: track.kind } : null;
+    siteCaptionsOnly = false;
+    sourceLang = "";
+    sourceIsAsr = false;
+    abortInflightTranslation("source changed");
+    closePaidApiPrompt();
+    clearPaidAskRetry();
+    usingSavedTranslation = false;
+    sourceCuesCache = null;
+    sentenceGroups = null;
+    preCuesTranslated = [];
+    // A track used before must be fetched and taken in again.
+    seenTrackKeys.clear();
+    if (P.forgetLoadedCues) P.forgetLoadedCues();
+    trackRequested = false;
+    maybeRequestTrack();
+    return { ok: true };
+  }
+
+  function requestSiteTrackPair() {
+    const others = siteSourceCandidates();
+    const source = pickSiteSource(others);
+    if (!source) {
+      const target = availableTracks.some(t => langMatches(STATE.settings.secondLang, t.languageCode));
+      leaveSiteCaptions(target ? "" : availableTracks.find(t => t.aiTranslated));
+      return;
+    }
+    trackRequested = true;
+    log(`site tracks: source ${source.languageCode}${source.kind === "asr" ? "(asr)" : ""}`);
+    P.requestTrack(source);
+    const target = getNativeTargetTrack();
+    if (target) {
+      log(`site tracks: target ${target.languageCode}`);
+      P.requestTrack(target);
+    }
+    watchForSilentTrack();
+  }
+
+  // `translated`: the only tracks are machine translations, none in the
+  // target language — nothing honest to show, so point at live transcription,
+  // which listens to the original.
+  function leaveSiteCaptions(translated) {
+    if (siteCaptionsOnly) return;
+    siteCaptionsOnly = true;
+    trackRequested = true;
+    log("site tracks: only the target language, leaving the site's caption alone");
+    currentRenderedText = "";
+    renderOverlay("");
+    hideNativeCaption(false);
+    setTranslationStatus(translated
+      ? { mode: "site_ai_only", lang: translated.languageCode, provider: "", requestedProvider: "", cueCount: 0, error: "" }
+      : { mode: "native", provider: "native", requestedProvider: "", cueCount: 0, error: "" });
+    // Bilibili marks machine tracks ("ai-zh") and says so in its own menu, so
+    // we name it the same way. Whether the player's caption is on cannot be
+    // told until a line shows, so one message covers both.
+    if (translated) {
+      // Said once per video, not again each time the viewer goes back to
+      // "don't translate".
+      if (!aiTranslationHinted) {
+        aiTranslationHinted = true;
+        showBriefHint(ydsT("siteOnlyAiTranslation", { lang: languageName(translated.languageCode) }), 6000);
+      }
+      return;
+    }
+    const ai = availableTracks.every(t => t.kind === "asr");
+    const lang = languageName(availableTracks[0].languageCode) + (ai ? " (AI)" : "");
+    showBriefHint(ydsT("siteOnlyTarget", { lang }), 5000);
+  }
+
+  function languageName(code) {
+    try {
+      return new Intl.DisplayNames([globalThis.ydsUiLang || "en"], { type: "language" }).of(code) || code;
+    } catch { return code; }
   }
 
   // We ask the player for a track once per video. An advert can swallow that
@@ -369,7 +515,13 @@
     clearTimeout(trackRetryTimer);
     if (trackRetries >= MAX_TRACK_RETRIES) return;
     trackRetryTimer = setTimeout(() => {
-      if (haveCues() || tornDown) return;
+      // With a native target track on offer, "something arrived" is not
+      // enough: the original can come in (the player fetches what the viewer
+      // has selected) while our request for the target was swallowed by an
+      // ad — and Google then translated the whole video beside a track that
+      // was sitting there all along.
+      const done = getNativeTargetTrack() ? preCuesNative.length > 0 : haveCues();
+      if (done || tornDown) return;
       if (!STATE.settings.enabled || !STATE.settings.secondLang) return;
       if (!availableTracks.length) return;
       trackRetries++;
@@ -384,6 +536,7 @@
     if (!P) return;
     if (!STATE.settings.enabled || !STATE.settings.secondLang) return;
     if (!availableTracks.length) return;
+    if (pairsSiteTracks()) { requestSiteTrackPair(); return; }
 
     const cc = isCcOn();
     const target = getNativeTargetTrack();
@@ -452,7 +605,7 @@
   }
 
   function getNativeTargetTrack() {
-    if (!STATE.settings.secondLang) return null;
+    if (!STATE.settings.secondLang || siteTargetDeclined) return null;
     return availableTracks.find(t => t.kind !== "asr" && langMatches(STATE.settings.secondLang, t.languageCode)) || null;
   }
 
@@ -503,6 +656,10 @@
   function maybeAskForPaidApi(cues, tl, reason) {
     const provider = selectedTranslationProvider();
     if (!isPaidProvider(provider)) return;
+    if (usingSavedTranslation) {
+      log(`paid ask skipped (${reason}): showing a saved translation`);
+      return;
+    }
     if (getNativeTargetTrack() || preCuesNative.length) {
       log(`paid ask skipped (${reason}): a native ${STATE.settings.secondLang} track is in play`);
       return;
@@ -630,6 +787,12 @@
     // No captions in hand means there is nothing to send the API. It happens
     // when the track never loaded for this video, and a reload is the only
     // thing that fixes it — so say that rather than failing silently.
+    if (pairsSiteTracks() && sourceCuesCache && preCuesNative.length) {
+      log("paid approve: replacing the site's own translation");
+      siteTargetDeclined = true;
+      siteTargetStandIn = preCuesNative;
+      preCuesNative = [];
+    }
     if (!sourceCuesCache || preCuesNative.length) {
       log(`paid approve refused: ${preCuesNative.length ? "a native track is showing" : "no source cues yet"}`);
       if (!preCuesNative.length) {
@@ -646,6 +809,7 @@
     const key = paidDecisionKey(provider);
     paidApiDecisions.set(key, "approved");
     closePaidApiPrompt();
+    usingSavedTranslation = false;
     preCuesTranslated = [];
     translateSourceNow(toGoogleLang(STATE.settings.secondLang), provider, `${reason} (user approved paid API)`);
     return { ok: true, provider };
@@ -678,6 +842,10 @@
     if (seenTrackKeys.has(dedupeKey) && !nowWantedAsNative) return;
     seenTrackKeys.add(dedupeKey);
 
+    if (isNativeTarget && siteTargetDeclined) {
+      log(`ingest: ignoring the site's ${trackLang} track, the viewer chose their API`);
+      return;
+    }
     if (isNativeTarget) {
       // Native second-language track — use directly, no merge / no translate.
       abortInflightTranslation(`native ${trackLang} loaded`);
@@ -725,6 +893,7 @@
     sentenceGroups = asrEnglish ? buildAsrSentenceGroups(sourceCues) : null;
     sourceLang = trackLang;
     sourceIsAsr = isAsr;
+    checkSavedTranslation();
     log(`ingest: ${rawCues.length} raw → ${sourceCues.length} source cues`
         + (sentenceGroups ? ` in ${sentenceGroups.length} sentences` : "")
         + ` (${trackLang || "?"}${isAsr ? ", asr" : ""})`);
@@ -752,14 +921,126 @@
       log("ingest: already have native cues, skipping translation");
       return;
     }
+    if (pairsSiteTracks() && getNativeTargetTrack()) {
+      log("ingest: the site's own translation is on its way, not translating");
+      // Should it never arrive, translate after all rather than show nothing.
+      setTimeout(() => {
+        if (sourceCuesCache && !preCuesNative.length && !preCuesTranslated.length && !siteTargetDeclined) {
+          log("ingest: the site's translation never came, translating ourselves");
+          translateSourceNow(toGoogleLang(STATE.settings.secondLang), "google", "site translation missing");
+        }
+      }, 6000);
+      return;
+    }
 
     const tl = toGoogleLang(STATE.settings.secondLang);
+    // The original arriving means the player is up and playing the video —
+    // past any ad. Retries spent while an ad played (a 30-second one uses
+    // them all) say nothing about now, so the request for a native target
+    // track starts over.
+    if (getNativeTargetTrack() && !preCuesNative.length && !pairsSiteTracks()) {
+      trackRetries = 0;
+      trackRequested = false;
+    }
     // Kick off translation, but also retry the native-track request: on YouTube,
     // cues arriving means CC just turned on, so a request we deferred earlier
     // can go through now.
     maybeRequestTrack();
     translateSourceNow(tl, chooseSourceTranslationProvider(), "source captions loaded");
     maybeAskForPaidApi(translationUnits(), tl, "source captions loaded");
+  }
+
+  // ---------- saved translations ----------
+  //
+  // A paid translation costs money every time it is made, so a finished one is
+  // kept in storage.local on this device, keyed by video, target language and
+  // source track. Opening the same video again shows it straight away: no API
+  // call, no question. They expire after the viewer's savedDays (default 7),
+  // and only the most recent SAVED_MAX are kept whatever that says: a long
+  // video is well under 100 KB, so that stays clear of the 10 MB quota.
+  const SAVED_INDEX = "ydsSavedIndex";
+  const SAVED_MAX = 50;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // How long the viewer keeps them (settings: 1, 7, 30 days or forever).
+  function savedExpired(entry) {
+    const days = Number(STATE.settings.savedDays ?? 7);
+    return days > 0 && Date.now() - (entry.at || 0) > days * DAY_MS;
+  }
+
+  function savedKey() {
+    if (!P || !STATE.videoId || !STATE.settings.secondLang || !sourceLang) return null;
+    return `ydsSaved|${P.id}|${STATE.videoId}|${STATE.settings.secondLang}|${sourceLang}${sourceIsAsr ? "(asr)" : ""}`;
+  }
+
+  async function saveTranslation(provider, sourceCount) {
+    const key = savedKey();
+    if (!key || !preCuesTranslated.length) return;
+    try {
+      const store = chrome.storage.local;
+      const entry = {
+        provider,
+        model: modelFor(provider),
+        sourceCount,
+        at: Date.now(),
+        cues: preCuesTranslated.map(c => [c.start, c.end, c.text])
+      };
+      let index = ((await store.get(SAVED_INDEX))[SAVED_INDEX] || []).filter(k => k !== key);
+      // Clear out what has expired while we are here.
+      const old = index.length ? await store.get(index) : {};
+      const expired = index.filter(k => !old[k] || savedExpired(old[k]));
+      index = index.filter(k => !expired.includes(k));
+      index.push(key);
+      const drop = expired.concat(index.splice(0, Math.max(0, index.length - SAVED_MAX)));
+      if (drop.length) await store.remove(drop);
+      await store.set({ [key]: entry, [SAVED_INDEX]: index });
+      log(`saved translation: ${entry.cues.length} cues (${provider})`);
+    } catch (e) { log("could not save translation", e); }
+  }
+
+  async function checkSavedTranslation() {
+    const key = savedKey();
+    if (!key) return;
+    const units = translationUnits().length;
+    let entry = null;
+    try { entry = (await chrome.storage.local.get(key))[key]; } catch { return; }
+    if (!entry || !entry.cues || !entry.cues.length) return;
+    if (savedExpired(entry)) {
+      log("saved translation expired");
+      try { await chrome.storage.local.remove(key); } catch {}
+      return;
+    }
+    // The source must still be the one it was made from, and nothing may have
+    // moved on meanwhile.
+    if (entry.sourceCount !== units || savedKey() !== key || usingSavedTranslation) return;
+    // The video's own human track in the target language is either the
+    // original or its author's translation; a translation of the other track
+    // into that language would only be a worse copy of it.
+    if (pairsSiteTracks() && getNativeTargetTrack()) {
+      log("saved translation not used: the video has its own target-language track");
+      return;
+    }
+    log(`using saved translation: ${entry.cues.length} cues (${entry.provider})`);
+    usingSavedTranslation = true;
+    abortInflightTranslation("saved translation found");
+    closePaidApiPrompt();
+    clearPaidAskRetry();
+    if (pairsSiteTracks()) {
+      siteTargetDeclined = true;
+      siteTargetStandIn = [];
+      preCuesNative = [];
+    }
+    preCuesTranslated = entry.cues.map(([start, end, text]) => ({ start, end, text }));
+    setTranslationStatus({
+      mode: "translated",
+      provider: entry.provider,
+      requestedProvider: entry.provider,
+      cueCount: preCuesTranslated.length,
+      totalCount: preCuesTranslated.length,
+      translatedCount: preCuesTranslated.length,
+      saved: true,
+      error: ""
+    });
   }
 
   // ---------- cue post-processing ----------
@@ -1579,6 +1860,10 @@ Translations:`;
   }
 
   async function startCuesTranslation(cues, tl, provider, reason, expand) {
+    if (usingSavedTranslation) {
+      log(`translation skipped (${reason}): showing the saved one`);
+      return;
+    }
     abortInflightTranslation(`start ${reason}`);
     const controller = new AbortController();
     translateAbortController = controller;
@@ -1586,6 +1871,10 @@ Translations:`;
     let providerUsed = "";
     let fallbackError = "";
     let untranslatedCount = 0;
+    // Batches the requested provider itself answered: one that hit a rate
+    // limit and went to Google still leaves a translation worth keeping.
+    let paidBatches = 0;
+    let freeBatches = 0;
     let batchError = "";
     setTranslationStatus({
       mode: "translating",
@@ -1618,6 +1907,7 @@ Translations:`;
           batchError = batchError || error;
         },
         markProviderUsed: (used, requested, error) => {
+          if (used === requested) paidBatches++; else freeBatches++;
           providerUsed = used || providerUsed;
           fallbackError = error || fallbackError;
           if (generation === translateGeneration && !controller.signal.aborted && !preCuesNative.length) {
@@ -1649,6 +1939,13 @@ Translations:`;
           untranslatedCount,
           error: batchError || fallbackError
         });
+        siteTargetStandIn = [];
+        // Saved when the paid provider did most of it and every line came
+        // back: a run that fell back to Google throughout is not what the
+        // viewer paid for, and would stop the next visit from trying again.
+        if (isPaidProvider(provider) && !untranslatedCount && paidBatches > freeBatches) {
+          saveTranslation(provider, cues.length);
+        }
         log(`intercept: pre-translated ${preCuesTranslated.length} cues via ${providerUsed || provider}` +
             (untranslatedCount ? `, ${untranslatedCount} left untranslated` : ""));
       } else {
@@ -2030,6 +2327,9 @@ Translations:`;
   // hatch is the translation-only switch.
   function overlayAllowed() {
     if (STATE.settings.translationOnly) return true;
+    // We fetch the site's tracks and draw both lines ourselves, so its caption
+    // switch has nothing to say about it — and Bilibili starts with it off.
+    if (pairsSiteTracks()) return true;
     return isCcOn() === true;
   }
 
@@ -2114,9 +2414,10 @@ Translations:`;
     const takeover = takeoverActive();
     hideNativeCaption(takeover && overlayAllowed());
 
-    if (video && cues.length && overlayAllowed()) {
+    if (video && (cues.length || siteTargetStandIn.length) && overlayAllowed()) {
       noteBilingualPlayback(video);
-      const text = findCuesAt(cues, video.currentTime);
+      let text = findCuesAt(cues, video.currentTime);
+      if (!text && siteTargetStandIn.length) text = findCuesAt(siteTargetStandIn, video.currentTime);
       const displayText = alignWithNativeLineBreaks(text);
       const changed = displayText !== currentRenderedText;
       currentRenderedText = displayText;
@@ -2131,7 +2432,9 @@ Translations:`;
         // Face first, then the line: drawing it measures it, and a measurement
         // taken in one face and painted in another is a line that wraps.
         matchNativeFont();
-        renderSourceLine(sourceTextAt(video.currentTime));
+        // "Translation only" means what it says even when the original line
+        // is ours to draw (Bilibili, or takeover): the translation alone.
+        renderSourceLine(STATE.settings.translationOnly ? "" : sourceTextAt(video.currentTime));
         if (changed || (overlayEl && overlayEl.style.display === "none")) {
           renderOverlay(displayText);
         }
@@ -2262,6 +2565,10 @@ Translations:`;
     if (!STATE.settings.enabled || !STATE.settings.secondLang) return;
     // If we're already rendering from any pre-loaded cues, skip the fallback.
     if (preCuesNative.length || preCuesTranslated.length) return;
+    if (siteCaptionsOnly) return;
+    // We hold the site's tracks ourselves. Reading its caption here would pick
+    // up the hidden target-language line and translate it into itself.
+    if (pairsSiteTracks() && availableTracks.length) return;
 
     const text = currentNativeText();
     if (!force && text === lastNativeText) return;
@@ -2410,6 +2717,7 @@ Translations:`;
         return { kind: "warn",
                  text: ydsT("toastPartial", { n: st.untranslatedCount || 0 }), sticky: true };
       case "translated": {
+        if (st.saved) return { kind: "ok", text: ydsT("toastSaved", { name, n: st.cueCount || 0 }), sticky: false };
         if (!toastAnnouncedWork) return null;
         toastAnnouncedWork = false;
         return { kind: "ok", text: ydsT("toastDone", { name, n: st.cueCount || 0 }), sticky: false };
@@ -2911,7 +3219,7 @@ Translations:`;
   function takeoverActive() {
     return STATE.settings.subtitleMode === "inline"
         && !live.active
-        && (sourceIsAsr || !!STATE.settings.takeoverCaptions)
+        && (sourceIsAsr || !!STATE.settings.takeoverCaptions || pairsSiteTracks())
         && !!(P && sourceCuesCache && sourceCuesCache.length);
   }
 
@@ -3472,6 +3780,12 @@ Translations:`;
     sourceLang = "";
     sourceIsAsr = false;
     betterSourceRequested = false;
+    siteCaptionsOnly = false;
+    siteTargetDeclined = false;
+    siteTargetStandIn = [];
+    usingSavedTranslation = false;
+    sourceChoice = null;
+    aiTranslationHinted = false;
     seenTrackKeys.clear();
     translationCache.clear();
     lastNativeText = "";
@@ -3716,6 +4030,25 @@ Translations:`;
   function panelHintSkip(why) {
     if (why !== panelHintWhy) { panelHintWhy = why; log("panel hint: " + why); }
   }
+  // A one-off note over the player, gone after `ms`. Waits for the player to
+  // exist, since the track list can arrive before it does.
+  function showBriefHint(text, ms, tries = 0) {
+    const host = getVideoContainer();
+    if (!host) {
+      if (tries < 20) setTimeout(() => showBriefHint(text, ms, tries + 1), 500);
+      return;
+    }
+    const el = document.createElement("div");
+    el.className = "yds-toast yds-toast-ok";     // top of the frame
+    el.textContent = text;
+    host.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("yds-toast-on"));
+    setTimeout(() => {
+      el.classList.remove("yds-toast-on");
+      setTimeout(() => el.remove(), 400);
+    }, ms);
+  }
+
   function showPanelHintOnce(items) {
     if (panelHintChecked) return;
     if (!items.length) return panelHintSkip("no panel paragraphs found yet");
@@ -3914,6 +4247,12 @@ Translations:`;
         videoId: P ? P.getVideoId() : null,
         videoTitle: P && P.videoTitle ? P.videoTitle() : "",
         tracks: availableTracks,
+        // Offered in the panel only when there is a real choice.
+        sourceOptions: pairsSiteTracks() && !live.active
+          ? siteSourceCandidates().map(t => ({ languageCode: t.languageCode, kind: t.kind, name: t.name, aiTranslated: !!t.aiTranslated }))
+          : [],
+        sourceLang,
+        sourceIsAsrNow: sourceIsAsr,
         translations: [],
         settings: STATE.settings,
         nativeCaptionText: currentNativeText(),
@@ -3934,6 +4273,10 @@ Translations:`;
         live: { active: live.active, status: live.status, detail: live.detail, server: live.server || null }
       });
       return true;
+    }
+    if (msg?.type === "YDS_SET_SOURCE") {
+      sendResponse(chooseSource(msg.languageCode, msg.kind));
+      return;
     }
     if (msg?.type === "YDS_APPROVE_PAID_API") {
       // Read the key straight from storage first: the popup may have saved it

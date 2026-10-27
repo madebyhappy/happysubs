@@ -216,7 +216,29 @@
     .os-panel ol li, #live .container > ol li { margin: 10px 0; }
     .os-panel ol li p { margin: 0 0 8px; }
     /* The numbered steps of the setup walkthrough. */
+    /* Heads the four steps, so it has to read a size above their h4s. */
+    #live .setup-title {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      margin: 56px 0 10px;
+    }
     #live h4 { font-size: 18px; font-weight: 700; margin: 30px 0 8px; }
+    /* Steps 1-4 get a numbered badge so they stand apart from the
+       numbered sub-steps (1. 2. …) listed under each. */
+    #live h4.live-step { display: flex; align-items: center; gap: 10px; font-size: 20px; margin-top: 36px; }
+    #live .step-no {
+      flex: none;
+      display: inline-grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--brand);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+    }
     #live .os-panel h4:first-child { margin-top: 18px; }
     .features-2 {
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -471,6 +493,18 @@
       font-size: 17px;
       margin: 0 0 40px;
     }
+    .section-desc .langs { color: var(--text); }
+    .section-desc .langs em { font-style: normal; }
+    .section-desc .video-guide {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 8px 18px;
+      border: 1px solid var(--brand-2);
+      border-radius: 999px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .section-desc .video-guide:hover { background: rgba(255,77,109,0.12); }
     .features {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -569,6 +603,13 @@
       color: var(--text-dim);
       font-size: 15px;
     }
+    /* Live-transcription cards fold like the FAQ: title shown, detail on click.
+       align-self keeps an opened card from stretching its closed neighbours. */
+    details.feature { padding: 24px; margin: 0; align-self: start; position: relative; }
+    details.feature summary::after { position: absolute; top: 24px; right: 24px; float: none; }
+    details.feature summary .icon { display: block; }
+    details.feature h3 { margin: 0; }
+    details.feature p { margin-top: 10px; font-size: 14.5px; }
 
     /* Footer */
     footer {
@@ -597,6 +638,7 @@
       .cta-secondary { margin-left: 0; margin-top: 10px; }
       section { padding: 40px 0; }
       section h2 { font-size: 26px; }
+      #live .setup-title { font-size: 22px; margin-top: 44px; }
       .film { margin-top: 40px; padding: 0 16px; }
       .film-frame { border-radius: 14px; }
       .film-btn { right: 10px; bottom: 10px; height: 36px; padding: 0 12px 0 11px; gap: 7px; font-size: 12px; }
@@ -817,27 +859,27 @@
   <section id="live">
     <div class="container">
       <h2 data-en="Live transcription">实时听译</h2>
-      <p class="section-desc" data-en="Creates subtitles for videos that have no subtitle track at all. Optional. Understands spoken Chinese, English, Japanese, Korean and Cantonese.">为完全没有字幕轨的视频创造字幕。可选功能，能听懂中文、英语、日语、韩语、粤语。</p>
+      <p class="section-desc" data-en='Creates subtitles for videos that have no subtitle track at all. Optional.<br><strong class="langs">Understands spoken <em>Chinese</em>, <em>English</em>, <em>Japanese</em>, <em>Korean</em> and <em>Cantonese</em>.</strong><br><a class="video-guide" href="https://youtu.be/VBT6nAkVGD4" target="_blank" rel="noopener">▶ Watch the 3-minute video guide</a> (in Chinese, with English subtitles)'>为完全没有字幕轨的视频创造字幕。可选功能。<br><strong class="langs">能听懂<em>中文</em>、<em>英语</em>、<em>日语</em>、<em>韩语</em>、<em>粤语</em>。</strong><br><a class="video-guide" href="https://youtu.be/VBT6nAkVGD4" target="_blank" rel="noopener">▶ 看 3 分钟视频教程</a></p>
 
       <div class="features features-2">
-        <div class="feature">
-          <div class="icon">🔒</div>
-          <h3 data-en="Runs on your machine">在你自己电脑上跑</h3>
+        <details class="feature">
+          <summary><div class="icon">🔒</div>
+          <h3 data-en="Runs on your machine">在你自己电脑上跑</h3></summary>
           <p data-en="Recognition happens in a small local service you install and run. The audio never leaves your computer, and there is no per-minute billing.">识别跑在你自己装的一个本地小服务里。音频不出本机，也没有按分钟计费。</p>
-        </div>
-        <div class="feature">
-          <div class="icon">🗣️</div>
-          <h3 data-en="Two passes, five languages">两遍识别，五种语言</h3>
+        </details>
+        <details class="feature">
+          <summary><div class="icon">🗣️</div>
+          <h3 data-en="Two passes, five languages">两遍识别，五种语言</h3></summary>
           <p data-en="Chinese and English appear word by word as they are spoken; when a sentence ends, a second model re-recognises it and replaces it with a more accurate, punctuated line. Japanese, Korean and Cantonese appear sentence by sentence.">中文和英语边说边出字；每句说完后，第二个模型把这一句重新识别一遍，换成更准、带标点的版本。日语、韩语、粤语按整句出现。</p>
-        </div>
-        <div class="feature">
-          <div class="icon">💬</div>
-          <h3 data-en="Whole sentences, steady">整句翻译，不再跳</h3>
+        </details>
+        <details class="feature">
+          <summary><div class="icon">💬</div>
+          <h3 data-en="Whole sentences, high accuracy">整句翻译，高准确度</h3></summary>
           <p data-en="Each sentence is translated once it is finished and then stays put. Free Google Translate by default; in the Live transcribe tab you can pick an AI translator with its own API key, which reads the two sentences before for context — about ¥0.2 an hour with DeepSeek in our test.">每句说完后整句翻译，出现后不再变。默认用免费的 Google 翻译；也可以在「实时听译」标签里单独选 AI 翻译和 API Key，翻译时会参考前两句。我们实测 DeepSeek 一小时约两毛钱。</p>
-        </div>
+        </details>
       </div>
 
-      <h3 style="margin-top:36px" data-en="How to set it up">怎么装、怎么用</h3>
+      <h3 class="setup-title" data-en="Setup and usage guide">安装及使用教程</h3>
       <p data-en="Four steps: install once, then start, turn on and turn off each time. Steps 1 and 2 differ by operating system — pick yours.">一共四步：安装只做一次，之后每次是启动、开启、关闭。第 1、2 步分系统，先选你的系统。</p>
 
       <div class="os-tabs" role="tablist" aria-label="Operating system">
@@ -846,7 +888,7 @@
       </div>
 
       <div class="os-panel" data-os="unix" role="tabpanel">
-        <h4 data-en="1. Install (once)">1. 安装（只做一次）</h4>
+        <h4 class="live-step" data-en='<span class="step-no">1</span>Install (once)'><span class="step-no">1</span>安装（只做一次）</h4>
         <ol>
           <li data-en="Open <strong>Terminal</strong>. On a Mac: press <kbd>⌘</kbd>+<kbd>Space</kbd>, type Terminal, press Return.">打开<strong>终端</strong>。Mac 上：按 <kbd>⌘</kbd>+<kbd>空格</kbd>，输入「终端」或 Terminal，回车。</li>
           <li>
@@ -857,7 +899,7 @@
         </ol>
         <p class="live-note" data-en="Needs Python 3, which Macs and most Linux systems already have.">需要 Python 3，Mac 和大多数 Linux 自带。</p>
 
-        <h4 data-en="2. Start the recogniser (each time, before watching)">2. 启动识别服务（每次看视频前）</h4>
+        <h4 class="live-step" data-en='<span class="step-no">2</span>Start the recogniser (each time, before watching)'><span class="step-no">2</span>启动识别服务（每次看视频前）</h4>
         <ol>
           <li>
             <p data-en="Open Terminal, paste this line and press Return:">打开终端，粘贴下面这一行，回车：</p>
@@ -869,7 +911,7 @@
       </div>
 
       <div class="os-panel" data-os="win" role="tabpanel" hidden>
-        <h4 data-en="1. Install (once)">1. 安装（只做一次）</h4>
+        <h4 class="live-step" data-en='<span class="step-no">1</span>Install (once)'><span class="step-no">1</span>安装（只做一次）</h4>
         <ol>
           <li>
             <p data-en='Install Python from <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org</a>, and tick <strong>Add python.exe to PATH</strong> in the installer.'>到 <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org</a> 下载 Windows 安装包，安装时记得勾上 <strong>Add python.exe to PATH</strong>。</p>
@@ -907,7 +949,7 @@ iwr "$repo/start.bat" -OutFile start.bat</pre>
           </li>
         </ol>
 
-        <h4 data-en="2. Start the recogniser (each time, before watching)">2. 启动识别服务（每次看视频前）</h4>
+        <h4 class="live-step" data-en='<span class="step-no">2</span>Start the recogniser (each time, before watching)'><span class="step-no">2</span>启动识别服务（每次看视频前）</h4>
         <ol>
           <li data-en="Open the <code>happysubs-server</code> folder and double-click <code>start.bat</code>. A black window opens.">打开 <code>happysubs-server</code> 文件夹，双击 <code>start.bat</code>，会弹出一个黑色窗口。</li>
           <li data-en="When it says <code>listening on ws://127.0.0.1:8765</code>, it is running. Leave that window open while you watch.">窗口里出现 <code>监听 ws://127.0.0.1:8765</code> 就是启动好了。看视频期间，这个窗口一直开着。</li>
@@ -916,13 +958,13 @@ iwr "$repo/start.bat" -OutFile start.bat</pre>
         <p class="live-note" data-en="Windows notes: if <code>py -3</code> is not recognised, use <code>python</code> instead — the Microsoft Store build of Python does not install the py launcher. Port already in use: <code>netstat -ano | findstr :8765</code> to find the PID, then <code>taskkill /PID &lt;pid&gt; /F</code>. If huggingface.co is unreachable from your network, swap it for <code>hf-mirror.com</code> in the block above — the paths are identical.">Windows 上几点：<code>py -3</code> 提示找不到的话改用 <code>python</code>——从微软商店装的 Python 不带 py 启动器。端口被占用时用 <code>netstat -ano | findstr :8765</code> 查到 PID，再 <code>taskkill /PID &lt;PID&gt; /F</code>。如果访问 huggingface.co 不通，把上面那段里的 <code>huggingface.co</code> 换成 <code>hf-mirror.com</code> 即可，路径完全一样。</p>
       </div>
 
-      <h4 style="margin-top:28px" data-en="3. Turn on live transcription">3. 开启听译</h4>
+      <h4 class="live-step" data-en='<span class="step-no">3</span>Turn on live transcription'><span class="step-no">3</span>开启听译</h4>
       <ol>
         <li data-en="Open the video and press play.">打开视频，点播放。</li>
         <li data-en="Click the HappySubs icon, switch to the <strong>Live transcribe</strong> tab, and press <strong>Start live transcription</strong>. Subtitles appear a few seconds later.">点 HappySubs 图标，切到<strong>「实时听译」</strong>标签，点<strong>「开启实时听译」</strong>。几秒后字幕出现。</li>
       </ol>
 
-      <h4 style="margin-top:28px" data-en="4. Turn it off">4. 关闭听译</h4>
+      <h4 class="live-step" data-en='<span class="step-no">4</span>Turn it off'><span class="step-no">4</span>关闭听译</h4>
       <ol type="a">
         <li data-en="<strong>Stop the subtitles:</strong> press <strong>Stop live transcription</strong> in the same tab of the popup."><strong>关闭字幕：</strong>在插件弹窗的同一个标签里点「关闭实时听译」。</li>
         <li data-en="<strong>Stop the recogniser:</strong> press <kbd>Ctrl</kbd>+<kbd>C</kbd> in its terminal window, or close that window (on Windows, the black window). Nothing keeps running in the background."><strong>关闭识别服务：</strong>在它的终端窗口里按 <kbd>Ctrl</kbd>+<kbd>C</kbd>，或者直接关掉那个窗口（Windows 上关掉那个黑色窗口）。关掉之后不会有任何东西留在后台运行。</li>

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import time
 import wave
@@ -40,8 +41,116 @@ STREAMING_LANGS = {"zh", "en"}
 DEBUG_AUDIO = os.environ.get("HAPPYSUBS_DEBUG_AUDIO") == "1"
 DEBUG_AUDIO_MAX_SAMPLES = SAMPLE_RATE * 180
 
+# 控制台编码不支持某些字(比如英文版 Windows 显示越南语)时,用 ? 代替,而不是报错
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", force=True)
 log = logging.getLogger("blc")
+
+
+def ui_lang() -> str:
+    """跟随系统语言:扩展界面有的五种,其余用英文。HAPPYSUBS_LANG=ja 之类可以手动指定。
+    Mac 上 $LANG 常常是空的或由终端设置,所以读系统设置;Windows 读界面语言。"""
+    raw = os.environ.get("HAPPYSUBS_LANG", "")
+    if not raw and sys.platform == "darwin":
+        try:
+            out = subprocess.run(["defaults", "read", "-g", "AppleLanguages"],
+                                 capture_output=True, text=True, timeout=3).stdout
+            m = re.search(r'\(\s*"?([A-Za-z_-]+)', out)
+            raw = m.group(1) if m else ""
+        except Exception:
+            pass
+    if not raw and sys.platform == "win32":
+        try:
+            import ctypes
+            import locale
+            raw = locale.windows_locale.get(ctypes.windll.kernel32.GetUserDefaultUILanguage(), "")
+        except Exception:
+            pass
+    if not raw:
+        raw = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
+    raw = raw.replace("_", "-").lower()
+    if raw.startswith("zh"):
+        return "zh-Hant" if re.match(r"zh-(hant|tw|hk|mo)", raw) else "zh"
+    for code in ("ja", "vi"):
+        if raw.startswith(code):
+            return code
+    return "en"
+
+
+# 「listening」在每种语言里都保留英文:网站和弹窗都让用户等这个词出现。
+MESSAGES = {
+    "en": {
+        "loading": "Loading the speech model…",
+        "loaded": "Model loaded",
+        "refine_loaded": "Second-pass model loaded (zh/en/ja/ko/yue)",
+        "refine_broken": "Couldn't load the second-pass model; using first-pass results: %s",
+        "refine_missing": "Second-pass model not installed; run the install command again to add it",
+        "connected": "Connected: %s",
+        "disconnected": "Disconnected: %s",
+        "reset": "Recognition reset for a new video",
+        "refine_failed": "Second pass failed; using the first-pass result: %s",
+        "listening": "listening on ws://%s:%d",
+        "port_busy": "Port %d is in use — the recogniser may already be running. To restart it, first run:",
+    },
+    "zh": {
+        "loading": "正在加载语音识别模型…",
+        "loaded": "模型加载完成",
+        "refine_loaded": "二次识别模型加载完成（中/英/日/韩/粤）",
+        "refine_broken": "二次识别模型加载失败，定稿将使用流式结果：%s",
+        "refine_missing": "未安装二次识别模型，重新运行一次安装命令即可装上",
+        "connected": "已连接：%s",
+        "disconnected": "已断开：%s",
+        "reset": "已重置识别状态",
+        "refine_failed": "二次识别失败，使用流式结果：%s",
+        "listening": "监听 · listening on ws://%s:%d",
+        "port_busy": "端口 %d 被占用，识别服务可能已经在运行。要重启的话先执行：",
+    },
+    "zh-Hant": {
+        "loading": "正在載入語音辨識模型…",
+        "loaded": "模型載入完成",
+        "refine_loaded": "二次辨識模型載入完成（中/英/日/韓/粵）",
+        "refine_broken": "二次辨識模型載入失敗，定稿將使用串流結果：%s",
+        "refine_missing": "未安裝二次辨識模型，重新執行一次安裝指令即可裝上",
+        "connected": "已連線：%s",
+        "disconnected": "已中斷連線：%s",
+        "reset": "已重設辨識狀態",
+        "refine_failed": "二次辨識失敗，使用串流結果：%s",
+        "listening": "監聽 · listening on ws://%s:%d",
+        "port_busy": "連接埠 %d 已被占用，辨識服務可能已經在執行。要重新啟動的話先執行：",
+    },
+    "ja": {
+        "loading": "音声認識モデルを読み込み中…",
+        "loaded": "モデルを読み込みました",
+        "refine_loaded": "2回目の認識モデルを読み込みました（中/英/日/韓/広東語）",
+        "refine_broken": "2回目の認識モデルを読み込めませんでした。1回目の結果を使います：%s",
+        "refine_missing": "2回目の認識モデルが入っていません。インストールコマンドをもう一度実行すると追加されます",
+        "connected": "接続しました：%s",
+        "disconnected": "切断しました：%s",
+        "reset": "新しい動画のため認識をリセットしました",
+        "refine_failed": "2回目の認識に失敗しました。1回目の結果を使います：%s",
+        "listening": "待機中 · listening on ws://%s:%d",
+        "port_busy": "ポート %d は使用中です。認識プログラムがすでに起動しているかもしれません。再起動するには、先にこれを実行します：",
+    },
+    "vi": {
+        "loading": "Đang tải mô hình nhận dạng giọng nói…",
+        "loaded": "Đã tải xong mô hình",
+        "refine_loaded": "Đã tải mô hình nhận dạng lần hai (Trung/Anh/Nhật/Hàn/Quảng Đông)",
+        "refine_broken": "Không tải được mô hình nhận dạng lần hai, sẽ dùng kết quả lần đầu: %s",
+        "refine_missing": "Chưa cài mô hình nhận dạng lần hai; chạy lại lệnh cài đặt để thêm",
+        "connected": "Đã kết nối: %s",
+        "disconnected": "Đã ngắt kết nối: %s",
+        "reset": "Đã đặt lại nhận dạng cho video mới",
+        "refine_failed": "Nhận dạng lần hai thất bại, dùng kết quả lần đầu: %s",
+        "listening": "Đang chờ · listening on ws://%s:%d",
+        "port_busy": "Cổng %d đang bị chiếm, có thể chương trình nhận dạng đã chạy rồi. Muốn khởi động lại, hãy chạy trước:",
+    },
+}
+MSG = MESSAGES[ui_lang()]
 
 
 def pick(name_int8: str, name_fp32: str) -> str:
@@ -50,7 +159,7 @@ def pick(name_int8: str, name_fp32: str) -> str:
     return str(p if p.exists() else MODEL_DIR / name_fp32)
 
 
-log.info("正在加载语音识别模型… · Loading the speech model…")
+log.info(MSG["loading"])
 recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
     tokens=str(MODEL_DIR / "tokens.txt"),
     encoder=pick("encoder-epoch-99-avg-1.int8.onnx", "encoder-epoch-99-avg-1.onnx"),
@@ -74,7 +183,7 @@ recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
     # 兜底:连续说这么久还没停顿就强制断句,免得一段越积越长、字幕铺满还被裁掉。
     rule3_min_utterance_length=8,
 )
-log.info("模型加载完成 · Model loaded")
+log.info(MSG["loaded"])
 
 refiner = None
 if (REFINE_DIR / "model.int8.onnx").exists() and (REFINE_DIR / "tokens.txt").exists():
@@ -86,11 +195,11 @@ if (REFINE_DIR / "model.int8.onnx").exists() and (REFINE_DIR / "tokens.txt").exi
             use_itn=True,       # 带标点、数字写成阿拉伯数字
             language="auto",    # 每句自己判断语言
         )
-        log.info("二次识别模型加载完成 · Second-pass model loaded (zh/en/ja/ko/yue)")
+        log.info(MSG["refine_loaded"])
     except Exception as e:  # 模型文件坏了、sherpa-onnx 太旧等:不影响流式识别
-        log.warning("二次识别模型加载失败,定稿将使用流式结果: %s", e)
+        log.warning(MSG["refine_broken"], e)
 else:
-    log.info("未安装二次识别模型,重新运行一次安装命令即可装上 · Second-pass model not installed; run the install command again to add it")
+    log.info(MSG["refine_missing"])
 
 
 def prettify(text: str) -> str:
@@ -154,7 +263,7 @@ SERVER_VERSION = "2.2.0"
 
 
 async def handle(ws):
-    log.info("已连接 · Connected: %s", ws.remote_address)
+    log.info(MSG["connected"], ws.remote_address)
     await ws.send(json.dumps({"type": "hello", "version": SERVER_VERSION, "refine": refiner is not None}))
     stream = recognizer.create_stream()
     loop = asyncio.get_running_loop()
@@ -184,7 +293,7 @@ async def handle(ws):
                         try:
                             better, lang = await loop.run_in_executor(None, refine, audio)
                         except Exception as e:
-                            log.warning("二次识别失败,使用流式结果: %s", e)
+                            log.warning(MSG["refine_failed"], e)
                             better, lang = "", ""
                         # 二次识别没听出话来(掌声、欢呼、音乐):这一段就不是话。流式模型
                         # 会把这类声音硬听成字("加油加油"),以前在这里保留了它的结果,
@@ -221,28 +330,28 @@ async def handle(ws):
                     seg = []
                     tail = np.zeros(0, dtype=np.float32)
                     recent_langs = []
-                    log.info("已重置识别状态")
+                    log.info(MSG["reset"])
     except websockets.ConnectionClosed:
         pass
     finally:
         if DEBUG_AUDIO:
             save_debug_wav(debug_chunks)
-        log.info("已断开 · Disconnected: %s", ws.remote_address)
+        log.info(MSG["disconnected"], ws.remote_address)
 
 
 async def main():
     try:
         # max_size=None: 音频二进制帧不限大小; 一次只服务一个页面
         async with websockets.serve(handle, HOST, PORT, max_size=None):
-            log.info("监听 · listening on ws://%s:%d", HOST, PORT)
+            log.info(MSG["listening"], HOST, PORT)
             await asyncio.Future()
     except OSError as e:
         if e.errno == errno.EADDRINUSE:
-            log.error(
-                "端口 %d 被占用,识别服务可能已经在运行。要重启的话先执行:\n"
-                "Port %d is in use — the recogniser may already be running. To restart it, first run:\n"
-                "    lsof -ti:%d | xargs kill", PORT, PORT, PORT,
-            )
+            if sys.platform == "win32":
+                fix = "netstat -ano | findstr :%d    →    taskkill /PID <PID> /F" % PORT
+            else:
+                fix = "lsof -ti:%d | xargs kill" % PORT
+            log.error(MSG["port_busy"] + "\n    %s", PORT, fix)
             sys.exit(1)
         raise
 
